@@ -1,0 +1,909 @@
+<!-- SOURCE TEMPLATE. Rendered to ../dashboard.html by scripts/ingest.py.
+     Edit this file; dashboard.html is generated. -->
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code · Usage &amp; Cost</title>
+<style>
+/* ---------------------------------------------------------------------------
+   Design tokens. Values are the dataviz reference palette, validated with
+   scripts/validate_palette.js for both surfaces:
+     dark  #1a1a19 -> all checks PASS
+     light #fcfcfb -> PASS, with a contrast WARN on aqua/yellow/magenta that
+                      obliges visible labels + a table view (both shipped).
+--------------------------------------------------------------------------- */
+:root {
+  --page:#0d0d0d; --surface:#1a1a19; --surface-2:#212120;
+  --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --baseline:#383835; --border:rgba(255,255,255,.10);
+  --good:#0ca30c;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+  /* sequential blue, ordered surface-adjacent -> far */
+  --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
+  --q6:#5598e7; --q7:#86b6ef; --q8:#b7d3f6;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --page:#f9f9f7; --surface:#fcfcfb; --surface-2:#f2f1ee;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --baseline:#c3c2b7; --border:rgba(11,11,11,.10);
+  --good:#006300;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+  --q1:#cde2fb; --q2:#b7d3f6; --q3:#9ec5f4; --q4:#6da7ec;
+  --q5:#3987e5; --q6:#256abf; --q7:#184f95; --q8:#0d366b;
+  color-scheme: light;
+}
+
+* { box-sizing:border-box; }
+html,body { margin:0; }
+body {
+  background:var(--page); color:var(--ink);
+  font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  padding:0 0 72px;
+}
+.wrap { max-width:1360px; margin:0 auto; padding:0 24px; }
+
+/* ---- top bar ---- */
+.top {
+  position:sticky; top:0; z-index:20;
+  background:color-mix(in srgb, var(--page) 88%, transparent);
+  -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);
+}
+.top-in { display:flex; align-items:center; gap:20px; padding:16px 0; flex-wrap:wrap; }
+.brand { display:flex; align-items:baseline; gap:12px; margin-right:auto; }
+.brand h1 { font-size:17px; font-weight:650; margin:0; letter-spacing:-.01em; }
+.brand .dot { width:7px; height:7px; border-radius:50%; background:var(--s1); flex:none;
+              align-self:center; box-shadow:0 0 0 3px color-mix(in srgb,var(--s1) 20%,transparent); }
+.brand .meta { color:var(--muted); font-size:12.5px; }
+
+/* ---- controls ---- */
+.seg { display:inline-flex; background:var(--surface-2); border:1px solid var(--border);
+       border-radius:9px; padding:2px; gap:2px; }
+.seg button {
+  appearance:none; border:0; background:transparent; color:var(--ink-2);
+  font:inherit; font-size:12.5px; padding:5px 11px; border-radius:7px; cursor:pointer;
+  white-space:nowrap; transition:background .12s, color .12s;
+}
+.seg button:hover { color:var(--ink); }
+.seg button[aria-pressed="true"] { background:var(--surface); color:var(--ink); font-weight:600;
+  box-shadow:0 1px 2px rgba(0,0,0,.18); }
+.seg button:focus-visible { outline:2px solid var(--s1); outline-offset:1px; }
+.ghost {
+  appearance:none; background:transparent; border:1px solid var(--border);
+  color:var(--ink-2); font:inherit; font-size:12.5px; padding:5px 11px;
+  border-radius:8px; cursor:pointer;
+}
+.ghost:hover { color:var(--ink); border-color:var(--muted); }
+.ghost[aria-pressed="true"] { background:var(--surface-2); color:var(--ink); }
+.ghost:focus-visible { outline:2px solid var(--s1); outline-offset:1px; }
+.lbl { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted);
+       font-weight:600; margin-right:2px; }
+
+/* ---- filter row: one row, above everything it scopes ---- */
+.filters { display:flex; align-items:center; gap:12px; padding:18px 0 4px; flex-wrap:wrap; }
+
+/* ---- stat tiles ---- */
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(178px,1fr)); gap:12px; margin:18px 0 0; }
+.tile { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px 18px; }
+.tile .k { font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); font-weight:600; }
+.tile .v { font-size:27px; font-weight:660; letter-spacing:-.02em; margin:7px 0 0; line-height:1.1; }
+.tile .s { font-size:12.5px; color:var(--ink-2); margin-top:5px; }
+.tile .s b { color:var(--ink); font-weight:600; }
+
+/* ---- cards ---- */
+.grid { display:grid; gap:16px; margin-top:16px; }
+.grid.two { grid-template-columns:1fr 1fr; }
+@media (max-width:980px){ .grid.two { grid-template-columns:1fr; } }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
+.card-hd { display:flex; align-items:flex-start; gap:16px; padding:18px 20px 12px; flex-wrap:wrap; }
+.card-hd h2 { margin:0; font-size:14.5px; font-weight:650; letter-spacing:-.005em; }
+.card-hd .sub { margin:4px 0 0; font-size:12.5px; color:var(--muted); max-width:62ch; }
+.card-tools { margin-left:auto; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.card-body { padding:0 20px 18px; }
+
+/* ---- legend ---- */
+.legend { display:flex; flex-wrap:wrap; gap:14px; padding:2px 0 12px; }
+.legend .it { display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:var(--ink-2); }
+.legend .sw { width:11px; height:11px; border-radius:3px; flex:none; }
+.legend .it b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+
+/* ---- svg ---- */
+.chart { position:relative; }
+svg { display:block; width:100%; overflow:visible; }
+.gridline { stroke:var(--grid); stroke-width:1; shape-rendering:crispEdges; }
+.axis { stroke:var(--baseline); stroke-width:1; shape-rendering:crispEdges; }
+.tick { fill:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.hit { fill:transparent; cursor:pointer; }
+.hit:focus-visible { outline:2px solid var(--s1); outline-offset:-2px; }
+.band { fill:var(--ink); opacity:0; transition:opacity .1s; pointer-events:none; }
+.band.on { opacity:.05; }
+
+/* ---- tooltip ---- */
+.tip {
+  position:absolute; pointer-events:none; opacity:0; transform:translate(-50%,-100%);
+  background:var(--surface-2); color:var(--ink); border:1px solid var(--border);
+  border-radius:10px; padding:9px 11px; font-size:12.5px; min-width:172px;
+  box-shadow:0 8px 28px rgba(0,0,0,.4); transition:opacity .1s; z-index:10;
+}
+.tip .t { font-weight:650; margin-bottom:6px; font-size:12.5px; }
+.tip .r { display:flex; align-items:center; gap:8px; justify-content:space-between; padding:2px 0; }
+.tip .r .n { display:inline-flex; align-items:center; gap:6px; color:var(--ink-2); }
+.tip .r .sw { width:9px; height:9px; border-radius:2.5px; flex:none; }
+.tip .r b { font-variant-numeric:tabular-nums; font-weight:600; }
+.tip .tot { border-top:1px solid var(--border); margin-top:5px; padding-top:5px; }
+
+/* ---- ranked bars (html, not svg) ---- */
+.rank { display:flex; flex-direction:column; gap:2px; }
+.rank .row { display:grid; grid-template-columns:minmax(0,190px) 1fr auto; align-items:center;
+             gap:12px; padding:5px 0; }
+.rank .nm { font-size:12.5px; color:var(--ink-2); overflow:hidden; text-overflow:ellipsis;
+            white-space:nowrap; }
+.rank .tr { background:var(--surface-2); border-radius:4px; height:9px; overflow:hidden; }
+.rank .fl { height:100%; background:var(--s1); border-radius:4px; }
+.rank .vl { font-size:12.5px; font-variant-numeric:tabular-nums; font-weight:600; min-width:74px;
+            text-align:right; }
+.rank .row:hover .nm { color:var(--ink); }
+
+/* ---- heatmap ---- */
+.heat { display:grid; grid-template-columns:34px repeat(24,1fr); gap:2px; align-items:center; }
+.heat .hl { font-size:10.5px; color:var(--muted); text-align:right; padding-right:4px; }
+.heat .cl { aspect-ratio:1; border-radius:2.5px; background:var(--surface-2); }
+.heat .hh { font-size:9.5px; color:var(--muted); text-align:center; font-variant-numeric:tabular-nums; }
+.scalebar { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--muted); margin-top:12px; }
+.scalebar .sw { width:15px; height:9px; border-radius:2px; }
+
+/* ---- tables ---- */
+.tv { overflow:auto; max-height:420px; margin-top:4px; }
+table { border-collapse:collapse; width:100%; font-size:12.5px; }
+th, td { text-align:right; padding:6px 10px; border-bottom:1px solid var(--border);
+         font-variant-numeric:tabular-nums; white-space:nowrap; }
+th { position:sticky; top:0; background:var(--surface); color:var(--muted); font-weight:600;
+     font-size:11px; text-transform:uppercase; letter-spacing:.05em; z-index:1; }
+th:first-child, td:first-child { text-align:left; font-variant-numeric:normal; }
+tbody tr:hover td { background:var(--surface-2); }
+tfoot td { font-weight:650; border-top:1px solid var(--baseline); border-bottom:0; }
+
+.hidden { display:none !important; }
+.note { font-size:12px; color:var(--muted); margin:10px 0 0; }
+.note b { color:var(--ink-2); font-weight:600; }
+.pill { display:inline-block; font-size:10.5px; padding:1.5px 7px; border-radius:20px;
+        background:var(--surface-2); border:1px solid var(--border); color:var(--muted);
+        vertical-align:middle; }
+footer { color:var(--muted); font-size:12px; padding:26px 0 0; line-height:1.7; }
+footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
+              font-size:11.5px; color:var(--ink-2); }
+@media (prefers-reduced-motion:reduce){ * { transition:none !important; } }
+</style>
+</head>
+<body>
+
+<div class="top"><div class="wrap top-in">
+  <div class="brand">
+    <span class="dot"></span>
+    <h1>Claude Code · Usage &amp; Cost</h1>
+    <span class="meta" id="hdr-meta"></span>
+  </div>
+  <button class="ghost" id="theme" aria-pressed="false">Light</button>
+</div></div>
+
+<main class="wrap">
+
+  <!-- one filter row, scoping every chart below -->
+  <div class="filters">
+    <span class="lbl">Range</span>
+    <div class="seg" id="range" role="group" aria-label="Date range"></div>
+    <span class="meta" id="range-note" style="color:var(--muted);font-size:12.5px"></span>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <!-- HERO -->
+  <div class="grid">
+    <section class="card">
+      <div class="card-hd">
+        <div>
+          <h2>Token consumption per day</h2>
+          <p class="sub" id="hero-sub"></p>
+        </div>
+        <div class="card-tools">
+          <div class="seg" id="hero-split" role="group" aria-label="Split by"></div>
+          <div class="seg" id="hero-metric" role="group" aria-label="Metric"></div>
+          <button class="ghost" data-tv="hero" aria-pressed="false">Table</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="legend" id="hero-legend"></div>
+        <div class="chart" id="hero-chart"></div>
+        <div class="tv hidden" id="hero-table"></div>
+        <p class="note" id="hero-note"></p>
+      </div>
+    </section>
+  </div>
+
+  <!-- INPUT vs OUTPUT -->
+  <div class="grid">
+    <section class="card">
+      <div class="card-hd">
+        <div>
+          <h2>Input vs output tokens per day</h2>
+          <p class="sub">Two panels, two scales &mdash; never one axis. Input volume dwarfs output,
+             so a shared scale would flatten output into an invisible sliver.</p>
+        </div>
+        <div class="card-tools">
+          <button class="ghost" data-tv="io" aria-pressed="false">Table</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="chart" id="io-chart"></div>
+        <div class="tv hidden" id="io-table"></div>
+        <p class="note" id="io-note"></p>
+      </div>
+    </section>
+  </div>
+
+  <!-- MODEL + PROJECTS -->
+  <div class="grid two">
+    <section class="card">
+      <div class="card-hd">
+        <div><h2>Cost by model</h2><p class="sub">Share of spend if every token were billed at public API rates.</p></div>
+      </div>
+      <div class="card-body">
+        <div class="chart" id="donut-chart"></div>
+        <div id="model-table"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-hd">
+        <div><h2>Where the time went</h2><p class="sub">Projects ranked by API-equivalent cost.</p></div>
+        <div class="card-tools">
+          <div class="seg" id="proj-metric" role="group" aria-label="Project metric"></div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="proj-chart"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- TOOLS + HEATMAP -->
+  <div class="grid two">
+    <section class="card">
+      <div class="card-hd">
+        <div><h2>What you used most</h2><p class="sub">Tool calls made by the agent on your behalf.</p></div>
+      </div>
+      <div class="card-body"><div id="tool-chart"></div></div>
+    </section>
+
+    <section class="card">
+      <div class="card-hd">
+        <div><h2>When you work</h2><p class="sub">Token volume by weekday and hour, local time.</p></div>
+        <div class="card-tools">
+          <button class="ghost" data-tv="heat" aria-pressed="false">Table</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="heat-chart"></div>
+        <div class="tv hidden" id="heat-table"></div>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <div id="foot-meta"></div>
+    <div style="margin-top:8px">
+      Refresh with <code>python3 scripts/ingest.py --current-month</code> ·
+      rates live in <code>config/pricing.json</code>
+    </div>
+  </footer>
+</main>
+
+<!-- Usage data is inlined here by scripts/ingest.py so this file works
+     from file:// in every browser. Edit scripts/dashboard.template.html,
+     not this generated file. -->
+<script>/*__USAGE_DATA__*/</script>
+<script>
+(() => {
+"use strict";
+const D = window.USAGE_DATA;
+if (!D) {
+  document.body.innerHTML =
+    '<div style="max-width:640px;margin:80px auto;padding:0 24px;font:15px/1.6 system-ui">' +
+    '<h1 style="font-size:19px">No usage data in this file</h1>' +
+    '<p style="color:#c3c2b7">This dashboard has its data inlined at build time. ' +
+    'Regenerate it from the repo root:</p>' +
+    '<pre style="background:#212120;padding:14px 16px;border-radius:10px;overflow:auto">' +
+    'python3 scripts/ingest.py</pre>' +
+    '<p style="color:#898781;font-size:13px">Then reopen this file.</p></div>';
+  return;
+}
+
+/* ------------------------------------------------------------------ utils */
+const $  = (s, r=document) => r.querySelector(s);
+const CSS = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const SERIES = ["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+const RAMP   = ["--q1","--q2","--q3","--q4","--q5","--q6","--q7","--q8"];
+
+const nf = new Intl.NumberFormat("en-US");
+const money = v => "$" + v.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+const money0 = v => "$" + v.toLocaleString("en-US", {maximumFractionDigits:0});
+function tok(v) {
+  const a = Math.abs(v);
+  if (a >= 1e9) return (v/1e9).toFixed(a >= 1e10 ? 1 : 2) + "B";
+  if (a >= 1e6) return (v/1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
+  if (a >= 1e3) return (v/1e3).toFixed(a >= 1e4 ? 0 : 1) + "k";
+  return nf.format(v);
+}
+const pct = (a,b) => b ? (a/b*100) : 0;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const parseDate = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); };
+const fmtDay  = s => parseDate(s).toLocaleDateString("en-US",{month:"short",day:"numeric"});
+const fmtFull = s => parseDate(s).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"});
+const addDays = (s,n) => { const d = parseDate(s); d.setDate(d.getDate()+n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs={}, parent) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+/* bar with rounded data-end, square against the baseline */
+function barPath(x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w/2, h));
+  return `M${x},${y+h} L${x},${y+r} Q${x},${y} ${x+r},${y} L${x+w-r},${y} Q${x+w},${y} ${x+w},${y+r} L${x+w},${y+h} Z`;
+}
+function niceTicks(max, count=4) {
+  if (max <= 0) return {max:1, ticks:[0,1]};
+  const raw = max / count, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1,2,2.5,5,10].find(m => m*mag >= raw) * mag;
+  const top = Math.ceil(max/step)*step, ticks = [];
+  for (let v=0; v<=top+1e-9; v+=step) ticks.push(v);
+  return {max:top, ticks};
+}
+
+/* ------------------------------------------------------- data preparation */
+const COLS  = D.columns;
+const FACTS = D.rows.map(r => { const o = {}; COLS.forEach((c,i) => o[c] = r[i]); return o; });
+const MULT  = D.cache_multipliers;
+const rateOf = m => D.pricing[m] || D.fallback;
+
+function costOf(f) {
+  const p = rateOf(f.model);
+  return (f.input * p.input + f.output * p.output
+        + f.cache_write_5m * p.input * MULT.write_5m
+        + f.cache_write_1h * p.input * MULT.write_1h
+        + f.cache_read     * p.input * MULT.read) / 1e6;
+}
+/* what the same tokens would cost with no cache discount at all */
+function uncachedCostOf(f) {
+  const p = rateOf(f.model);
+  return ((f.input + f.cache_write_5m + f.cache_write_1h + f.cache_read) * p.input
+        + f.output * p.output) / 1e6;
+}
+FACTS.forEach(f => {
+  f.cost = costOf(f);
+  f.uncached = uncachedCostOf(f);
+  f.inputSide = f.input + f.cache_write_5m + f.cache_write_1h + f.cache_read;
+  f.total = f.inputSide + f.output;
+});
+
+/* Colour follows the entity, never its rank: the model order is computed once
+   over the whole dataset and then frozen, so filtering never repaints a series. */
+const MODEL_KEYS = (() => {
+  const t = {};
+  FACTS.forEach(f => t[f.model] = (t[f.model] || 0) + f.cost);
+  return Object.keys(t).sort((a,b) => t[b] - t[a]);
+})();
+const MODEL_COLOR = {};
+MODEL_KEYS.forEach((m,i) => MODEL_COLOR[m] = SERIES[i % 8]);
+const modelLabel = m => D.model_labels[m] || m;
+
+const TYPES = [
+  {k:"cache_read",     label:"Cache read",     c:"--s1"},
+  {k:"cache_write_1h", label:"Cache write 1h", c:"--s2"},
+  {k:"cache_write_5m", label:"Cache write 5m", c:"--s3"},
+  {k:"input",          label:"Fresh input",    c:"--s4"},
+  {k:"output",         label:"Output",         c:"--s5"},
+];
+const TYPE_RATE = { cache_read:MULT.read, cache_write_1h:MULT.write_1h,
+                    cache_write_5m:MULT.write_5m, input:1, output:null };
+
+/* --------------------------------------------------------------- state */
+const ALL_DATES = [...new Set(FACTS.map(f => f.date))].sort();
+const LAST = ALL_DATES[ALL_DATES.length-1];
+const RANGES = [
+  {id:"7",   label:"7 days"},
+  {id:"14",  label:"14 days"},
+  {id:"30",  label:"30 days"},
+  {id:"all", label:"All time"},
+];
+/* State is mirrored into location.hash so any view is shareable and bookmarkable. */
+const state = { range:"all", split:"model", metric:"tokens", proj:"cost", theme:"dark" };
+const ALLOWED = {
+  range: RANGES.map(r => r.id), split:["model","type"],
+  metric:["tokens","cost"], proj:["cost","tokens","messages"], theme:["dark","light"],
+};
+(function readHash() {
+  new URLSearchParams(location.hash.slice(1)).forEach((v,k) => {
+    if (ALLOWED[k] && ALLOWED[k].includes(v)) state[k] = v;
+  });
+  document.documentElement.dataset.theme = state.theme;
+})();
+function writeHash() {
+  const p = new URLSearchParams();
+  Object.keys(ALLOWED).forEach(k => p.set(k, state[k]));
+  history.replaceState(null, "", "#" + p.toString());
+}
+
+function activeDates() {
+  if (state.range === "all") return { from: ALL_DATES[0], to: LAST };
+  return { from: addDays(LAST, -(Number(state.range)-1)), to: LAST };
+}
+function calendarDays() {
+  const {from, to} = activeDates(), out = [];
+  for (let d = from; d <= to; d = addDays(d,1)) out.push(d);
+  return out;
+}
+const inRange = f => { const {from,to} = activeDates(); return f.date >= from && f.date <= to; };
+const slice = () => FACTS.filter(inRange);
+
+function groupSum(rows, keyFn) {
+  const g = {};
+  rows.forEach(f => {
+    const k = keyFn(f);
+    const b = g[k] || (g[k] = { input:0, output:0, cache_write_5m:0, cache_write_1h:0,
+                               cache_read:0, messages:0, cost:0, uncached:0,
+                               inputSide:0, total:0, days:new Set() });
+    ["input","output","cache_write_5m","cache_write_1h","cache_read","messages",
+     "cost","uncached","inputSide","total"].forEach(x => b[x] += f[x]);
+    b.days.add(f.date);
+  });
+  return g;
+}
+
+/* --------------------------------------------------------------- tooltip */
+function mkTip(host) {
+  const t = document.createElement("div");
+  t.className = "tip"; host.appendChild(t);
+  return {
+    show(html, x, y) { t.innerHTML = html; t.style.opacity = 1;
+      const w = host.clientWidth, bw = t.offsetWidth;
+      t.style.left = Math.max(bw/2+4, Math.min(w-bw/2-4, x)) + "px";
+      t.style.top  = Math.max(8, y - 10) + "px"; },
+    hide() { t.style.opacity = 0; }
+  };
+}
+const tipRow = (color, name, val) =>
+  `<div class="r"><span class="n">${color ? `<span class="sw" style="background:${color}"></span>` : ""}${esc(name)}</span><b>${val}</b></div>`;
+
+/* ============================================================= STAT TILES */
+function renderTiles() {
+  const rows = slice(), days = new Set(rows.map(r => r.date));
+  const sum = k => rows.reduce((a,f) => a + f[k], 0);
+  const cost = sum("cost"), uncached = sum("uncached");
+  const out = sum("output"), inSide = sum("inputSide");
+  const cacheRead = sum("cache_read");
+  const {from,to} = activeDates();
+  let sessions = 0, userMsgs = 0;
+  Object.entries(D.sessions_daily).forEach(([d,n]) => { if (d>=from && d<=to) sessions += n; });
+  Object.entries(D.user_messages_daily).forEach(([d,n]) => { if (d>=from && d<=to) userMsgs += n; });
+
+  const top = Object.entries(groupSum(rows, f => f.project)).sort((a,b) => b[1].cost - a[1].cost)[0];
+  const perDay = days.size ? cost/days.size : 0;
+  const saved = uncached - cost;
+
+  const tiles = [
+    { k:"API-equivalent cost", v:money(cost),
+      s:`<b>${money0(perDay)}</b> per active day` },
+    { k:"Tokens processed", v:tok(inSide+out),
+      s:`<b>${tok(cacheRead)}</b> of it cache reads` },
+    { k:"Output tokens", v:tok(out),
+      s:`<b>${pct(out, inSide+out).toFixed(2)}%</b> of volume, <b>${pct(rows.reduce((a,f)=>a+f.output*rateOf(f.model).output/1e6,0), cost).toFixed(0)}%</b> of cost` },
+    { k:"Saved by caching", v:money0(saved),
+      s:`<b>${pct(saved, uncached).toFixed(1)}%</b> off the uncached price` },
+    { k:"Active days", v:String(days.size),
+      s:`<b>${sessions}</b> sessions · <b>${nf.format(userMsgs)}</b> messages` },
+    { k:"Busiest project", v:top ? esc(top[0].split("/").pop()) : "—",
+      s: top ? `<b>${money0(top[1].cost)}</b> · ${pct(top[1].cost, cost).toFixed(0)}% of spend` : "" },
+  ];
+  $("#tiles").innerHTML = tiles.map(t =>
+    `<div class="tile"><div class="k">${t.k}</div><div class="v">${t.v}</div><div class="s">${t.s}</div></div>`
+  ).join("");
+}
+
+/* ========================================================== HERO: per day */
+function heroSeries() {
+  return state.split === "model"
+    ? MODEL_KEYS.map(m => ({ id:m, label:modelLabel(m), color:CSS(MODEL_COLOR[m]) }))
+    : TYPES.map(t => ({ id:t.k, label:t.label, color:CSS(t.c) }));
+}
+function heroValue(f, sid) {
+  if (state.split === "model") {
+    if (f.model !== sid) return 0;
+    return state.metric === "cost" ? f.cost : f.total;
+  }
+  const tokens = f[sid];
+  if (state.metric === "tokens") return tokens;
+  const p = rateOf(f.model);
+  return sid === "output" ? tokens*p.output/1e6 : tokens*p.input*TYPE_RATE[sid]/1e6;
+}
+function renderHero() {
+  const host = $("#hero-chart");
+  host.innerHTML = "";
+  const series = heroSeries(), days = calendarDays(), rows = slice();
+  const fmt = state.metric === "cost" ? money : tok;
+
+  // day -> series -> value
+  const byDay = {};
+  days.forEach(d => { byDay[d] = {}; series.forEach(s => byDay[d][s.id] = 0); });
+  rows.forEach(f => { series.forEach(s => { byDay[f.date][s.id] += heroValue(f, s.id); }); });
+
+  const totals = days.map(d => series.reduce((a,s) => a + byDay[d][s.id], 0));
+  const {max, ticks} = niceTicks(Math.max(...totals, 1));
+
+  const W = host.clientWidth || 900, H = 300;
+  const M = { t:8, r:8, b:26, l:52 };
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const svg = el("svg", { viewBox:`0 0 ${W} ${H}`, height:H,
+    role:"img", "aria-label":`Daily ${state.metric} split by ${state.split}` }, host);
+
+  ticks.forEach(v => {
+    const y = M.t + ih - (v/max)*ih;
+    el("line", { class:"gridline", x1:M.l, x2:M.l+iw, y1:y, y2:y }, svg);
+    const tx = el("text", { class:"tick", x:M.l-8, y:y+4, "text-anchor":"end" }, svg);
+    tx.textContent = state.metric === "cost" ? (v ? money0(v) : "$0") : tok(v);
+  });
+  el("line", { class:"axis", x1:M.l, x2:M.l+iw, y1:M.t+ih, y2:M.t+ih }, svg);
+
+  const slot = iw / days.length, bw = Math.max(1, slot - 2);   // 2px surface gap
+  const tip = mkTip(host);
+  const labelEvery = Math.ceil(days.length / 10);
+
+  days.forEach((d, i) => {
+    const x = M.l + i*slot + 1;
+    if (i % labelEvery === 0) {
+      const tx = el("text", { class:"tick", x:x+bw/2, y:M.t+ih+16, "text-anchor":"middle" }, svg);
+      tx.textContent = fmtDay(d);
+    }
+    const band = el("rect", { class:"band", x:M.l+i*slot, y:M.t, width:slot, height:ih }, svg);
+
+    let acc = 0;
+    const stack = series.map(s => ({ s, v:byDay[d][s.id] })).filter(o => o.v > 0);
+    stack.forEach((o, j) => {
+      const h = (o.v/max)*ih;
+      const y = M.t + ih - acc - h;
+      acc += h;
+      const isTop = j === stack.length-1;
+      const gap = j > 0 ? 2 : 0;                                 // 2px between segments
+      const hh = Math.max(0.8, h - gap);
+      if (isTop) el("path", { d:barPath(x, y, bw, hh, 4), fill:o.s.color }, svg);
+      else el("rect", { x, y, width:bw, height:hh, fill:o.s.color }, svg);
+    });
+
+    const total = totals[i];
+    const html = `<div class="t">${fmtFull(d)}</div>` +
+      (stack.length ? stack.slice().reverse().map(o => tipRow(o.s.color, o.s.label, fmt(o.v))).join("")
+                    : `<div class="r"><span class="n">No activity</span></div>`) +
+      (stack.length > 1 ? `<div class="r tot"><span class="n">Total</span><b>${fmt(total)}</b></div>` : "");
+    const hit = el("rect", { class:"hit", x:M.l+i*slot, y:M.t, width:slot, height:ih,
+                             tabindex:"0", role:"button",
+                             "aria-label":`${fmtFull(d)}: ${fmt(total)}` }, svg);
+    const on  = () => { band.classList.add("on");
+      tip.show(html, M.l + i*slot + slot/2, M.t + ih - acc); };
+    const off = () => { band.classList.remove("on"); tip.hide(); };
+    hit.addEventListener("mouseenter", on); hit.addEventListener("mouseleave", off);
+    hit.addEventListener("focus", on);      hit.addEventListener("blur", off);
+  });
+
+  // legend, with totals so identity is never colour-alone
+  const seriesTotals = {};
+  series.forEach(s => seriesTotals[s.id] = days.reduce((a,d) => a + byDay[d][s.id], 0));
+  $("#hero-legend").innerHTML = series
+    .filter(s => seriesTotals[s.id] > 0)
+    .sort((a,b) => seriesTotals[b.id] - seriesTotals[a.id])
+    .map(s => `<span class="it"><span class="sw" style="background:${s.color}"></span>${esc(s.label)} <b>${fmt(seriesTotals[s.id])}</b></span>`)
+    .join("");
+
+  $("#hero-sub").textContent = state.split === "model"
+    ? "Stacked by model. Colours are fixed per model across every chart."
+    : "Stacked by how each token was billed — cached reads are 10× cheaper than fresh input.";
+  $("#hero-note").innerHTML = state.metric === "tokens"
+    ? `Cache reads dominate raw volume. Switch to <b>Cost</b> to see what actually drives spend.`
+    : `Priced at public API rates: cache reads ×${MULT.read}, 1h writes ×${MULT.write_1h}, 5m writes ×${MULT.write_5m}.`;
+
+  // table twin
+  $("#hero-table").innerHTML = `<table><thead><tr><th>Day</th>${
+    series.map(s => `<th>${esc(s.label)}</th>`).join("")}<th>Total</th></tr></thead><tbody>${
+    days.map((d,i) => `<tr><td>${fmtFull(d)}</td>${
+      series.map(s => `<td>${byDay[d][s.id] ? fmt(byDay[d][s.id]) : "—"}</td>`).join("")
+    }<td>${fmt(totals[i])}</td></tr>`).join("")}</tbody><tfoot><tr><td>Total</td>${
+    series.map(s => `<td>${fmt(seriesTotals[s.id])}</td>`).join("")
+    }<td>${fmt(totals.reduce((a,b) => a+b, 0))}</td></tr></tfoot></table>`;
+}
+
+/* ============================================== INPUT vs OUTPUT (2 panels) */
+function renderIO() {
+  const host = $("#io-chart"); host.innerHTML = "";
+  const days = calendarDays(), rows = slice();
+  const inp = {}, out = {};
+  days.forEach(d => { inp[d] = 0; out[d] = 0; });
+  rows.forEach(f => { inp[f.date] += f.inputSide; out[f.date] += f.output; });
+
+  const W = host.clientWidth || 900, PH = 116, GAP = 34, H = PH*2 + GAP + 22;
+  const M = { t:6, r:8, l:52 }, iw = W - M.l - M.r;
+  const svg = el("svg", { viewBox:`0 0 ${W} ${H}`, height:H, role:"img",
+    "aria-label":"Input and output tokens per day, separate scales" }, host);
+  const tip = mkTip(host);
+  const slot = iw/days.length, bw = Math.max(1, slot-2);
+  const labelEvery = Math.ceil(days.length/10);
+
+  [{ data:inp, color:CSS("--s1"), name:"Input side", top:M.t },
+   { data:out, color:CSS("--s2"), name:"Output",     top:M.t+PH+GAP }].forEach((p, pi) => {
+    const vals = days.map(d => p.data[d]);
+    const {max, ticks} = niceTicks(Math.max(...vals,1), 2);
+    const y0 = p.top + PH;
+
+    const lab = el("text", { x:M.l, y:p.top-6, class:"tick", "font-weight":"600" }, svg);
+    lab.setAttribute("fill", "var(--ink-2)");
+    lab.textContent = `${p.name} — peak ${tok(Math.max(...vals))}/day`;
+
+    ticks.forEach(v => {
+      const y = y0 - (v/max)*PH;
+      el("line", { class:"gridline", x1:M.l, x2:M.l+iw, y1:y, y2:y }, svg);
+      const tx = el("text", { class:"tick", x:M.l-8, y:y+4, "text-anchor":"end" }, svg);
+      tx.textContent = tok(v);
+    });
+    el("line", { class:"axis", x1:M.l, x2:M.l+iw, y1:y0, y2:y0 }, svg);
+
+    days.forEach((d,i) => {
+      const v = p.data[d], x = M.l + i*slot + 1;
+      if (v > 0) {
+        const h = Math.max(1, (v/max)*PH);
+        el("path", { d:barPath(x, y0-h, bw, h, 3), fill:p.color }, svg);
+      }
+      if (pi === 1 && i % labelEvery === 0) {
+        const tx = el("text", { class:"tick", x:x+bw/2, y:y0+16, "text-anchor":"middle" }, svg);
+        tx.textContent = fmtDay(d);
+      }
+      const hit = el("rect", { class:"hit", x:M.l+i*slot, y:p.top, width:slot, height:PH,
+                               tabindex:"0", role:"button",
+                               "aria-label":`${fmtFull(d)} ${p.name}: ${tok(v)}` }, svg);
+      const html = `<div class="t">${fmtFull(d)}</div>` +
+        tipRow(CSS("--s1"), "Input side", tok(inp[d])) +
+        tipRow(CSS("--s2"), "Output", tok(out[d])) +
+        `<div class="r tot"><span class="n">Ratio</span><b>${out[d] ? (inp[d]/out[d]).toFixed(0)+":1" : "—"}</b></div>`;
+      const on  = () => tip.show(html, M.l+i*slot+slot/2, p.top);
+      const off = () => tip.hide();
+      hit.addEventListener("mouseenter", on); hit.addEventListener("mouseleave", off);
+      hit.addEventListener("focus", on);      hit.addEventListener("blur", off);
+    });
+  });
+
+  const ti = Object.values(inp).reduce((a,b)=>a+b,0), to = Object.values(out).reduce((a,b)=>a+b,0);
+  $("#io-note").innerHTML = `Over this range you sent <b>${tok(ti)}</b> input-side tokens and
+    received <b>${tok(to)}</b> output — a ratio of <b>${to ? Math.round(ti/to) : 0}:1</b>.
+    That asymmetry is why prompt caching matters so much.`;
+  $("#io-table").innerHTML = `<table><thead><tr><th>Day</th><th>Input side</th><th>Output</th><th>Ratio</th></tr></thead><tbody>${
+    days.map(d => `<tr><td>${fmtFull(d)}</td><td>${inp[d]?nf.format(inp[d]):"—"}</td><td>${out[d]?nf.format(out[d]):"—"}</td><td>${out[d]?(inp[d]/out[d]).toFixed(0)+":1":"—"}</td></tr>`).join("")
+  }</tbody><tfoot><tr><td>Total</td><td>${nf.format(ti)}</td><td>${nf.format(to)}</td><td>${to?Math.round(ti/to)+":1":"—"}</td></tr></tfoot></table>`;
+}
+
+/* ============================================================ MODEL DONUT */
+function renderModels() {
+  const host = $("#donut-chart"); host.innerHTML = "";
+  const g = groupSum(slice(), f => f.model);
+  const items = MODEL_KEYS.filter(m => g[m] && g[m].cost > 0)
+    .map(m => ({ id:m, label:modelLabel(m), color:CSS(MODEL_COLOR[m]), ...g[m] }));
+  const total = items.reduce((a,i) => a + i.cost, 0);
+
+  const W = host.clientWidth || 400, S = 190, cx = W/2, cy = S/2, R = 78, r = 50;
+  const svg = el("svg", { viewBox:`0 0 ${W} ${S}`, height:S, role:"img",
+    "aria-label":"Share of cost by model" }, host);
+
+  let a0 = -Math.PI/2;
+  const PAD = total ? 0.018 : 0;                       // ~2px surface gap between arcs
+  items.forEach(it => {
+    const sweep = (it.cost/total) * Math.PI*2;
+    // Never let the gap swallow a slice: a tiny share still draws a visible sliver
+    // (its exact value is carried by the table below).
+    const pad = Math.min(PAD, sweep * 0.4);
+    const s = a0 + pad/2, e = a0 + sweep - pad/2;
+    if (sweep > 0) {
+      const big = (e-s) > Math.PI ? 1 : 0;
+      const p = [
+        `M${cx+R*Math.cos(s)},${cy+R*Math.sin(s)}`,
+        `A${R},${R} 0 ${big} 1 ${cx+R*Math.cos(e)},${cy+R*Math.sin(e)}`,
+        `L${cx+r*Math.cos(e)},${cy+r*Math.sin(e)}`,
+        `A${r},${r} 0 ${big} 0 ${cx+r*Math.cos(s)},${cy+r*Math.sin(s)}`, "Z"
+      ].join(" ");
+      const path = el("path", { d:p, fill:it.color }, svg);
+      const t = el("title", {}, path);
+      t.textContent = `${it.label}: ${money(it.cost)} (${pct(it.cost,total).toFixed(1)}%)`;
+    }
+    a0 += sweep;
+  });
+  const c1 = el("text", { x:cx, y:cy-2, "text-anchor":"middle", "font-size":"22",
+    "font-weight":"660", fill:"var(--ink)" }, svg);
+  c1.textContent = money0(total);
+  const c2 = el("text", { x:cx, y:cy+16, "text-anchor":"middle", "font-size":"11",
+    fill:"var(--muted)" }, svg);
+  c2.textContent = "total";
+
+  $("#model-table").innerHTML = `<table><thead><tr>
+      <th>Model</th><th>Rate in/out</th><th>Tokens</th><th>Cost</th><th>Share</th>
+    </tr></thead><tbody>${items.map(it => {
+      const p = rateOf(it.id);
+      return `<tr>
+        <td><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2.5px;background:${it.color};margin-right:7px"></span>${esc(it.label)}${p.assumed?' <span class="pill" title="'+esc(p.note||"")+'">est. rate</span>':""}</td>
+        <td>$${p.input}/$${p.output}</td>
+        <td>${tok(it.total)}</td>
+        <td>${money(it.cost)}</td>
+        <td>${pct(it.cost,total).toFixed(1)}%</td></tr>`;
+    }).join("")}</tbody><tfoot><tr><td>Total</td><td></td>
+      <td>${tok(items.reduce((a,i)=>a+i.total,0))}</td><td>${money(total)}</td><td>100%</td>
+    </tr></tfoot></table>`;
+}
+
+/* ========================================================= RANKED BARS */
+function rankBars(host, items, fmt) {
+  const max = Math.max(...items.map(i => i.v), 1);
+  host.innerHTML = `<div class="rank">${items.map(i => `
+    <div class="row" title="${esc(i.name)} — ${fmt(i.v)}">
+      <div class="nm">${esc(i.name)}</div>
+      <div class="tr"><div class="fl" style="width:${Math.max(1.5, i.v/max*100)}%"></div></div>
+      <div class="vl">${fmt(i.v)}</div>
+    </div>`).join("")}</div>`;
+}
+function renderProjects() {
+  const g = groupSum(slice(), f => f.project);
+  const key = state.proj;
+  const fmt = key === "cost" ? money : (key === "messages" ? nf.format : tok);
+  let items = Object.entries(g)
+    .map(([name,v]) => ({ name, v: key === "tokens" ? v.total : v[key] }))
+    .filter(i => i.v > 0)
+    .sort((a,b) => b.v - a.v);
+  if (items.length > 12) {
+    const rest = items.slice(12).reduce((a,i) => a + i.v, 0);
+    items = items.slice(0,12);
+    if (rest > 0) items.push({ name:`Other (${Object.keys(g).length-12} projects)`, v:rest });
+  }
+  rankBars($("#proj-chart"), items, fmt);
+}
+function renderTools() {
+  const {from,to} = activeDates(), t = {};
+  Object.entries(D.tools_daily).forEach(([d,m]) => {
+    if (d < from || d > to) return;
+    Object.entries(m).forEach(([k,n]) => t[k] = (t[k]||0) + n);
+  });
+  let items = Object.entries(t).map(([name,v]) => ({ name, v })).sort((a,b) => b.v - a.v);
+  if (items.length > 12) {
+    const rest = items.slice(12).reduce((a,i) => a+i.v, 0);
+    items = items.slice(0,12);
+    if (rest > 0) items.push({ name:`Other (${Object.keys(t).length-12} tools)`, v:rest });
+  }
+  rankBars($("#tool-chart"), items, nf.format);
+}
+
+/* =============================================================== HEATMAP */
+const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+function renderHeat() {
+  const {from,to} = activeDates();
+  const grid = Array.from({length:7}, () => new Array(24).fill(0));
+  Object.entries(D.hours_daily).forEach(([d,hours]) => {
+    if (d < from || d > to) return;
+    const dow = (parseDate(d).getDay() + 6) % 7;          // Mon = 0
+    hours.forEach((v,h) => grid[dow][h] += v);
+  });
+  const max = Math.max(...grid.flat(), 1);
+  const step = v => {
+    if (v <= 0) return null;
+    const i = Math.min(RAMP.length-1, Math.floor(Math.sqrt(v/max) * RAMP.length));
+    return CSS(RAMP[i]);
+  };
+  let html = `<div class="heat"><div></div>` +
+    Array.from({length:24}, (_,h) => `<div class="hh">${h%3===0?h:""}</div>`).join("") + `</div>`;
+  html += `<div class="heat" style="margin-top:3px">`;
+  grid.forEach((row, d) => {
+    html += `<div class="hl">${DOW[d]}</div>`;
+    row.forEach((v,h) => {
+      const c = step(v);
+      html += `<div class="cl"${c?` style="background:${c}"`:""} title="${DOW[d]} ${h}:00 — ${tok(v)} tokens"></div>`;
+    });
+  });
+  html += `</div><div class="scalebar"><span>Less</span>` +
+    RAMP.map(q => `<span class="sw" style="background:${CSS(q)}"></span>`).join("") +
+    `<span>More</span><span style="margin-left:auto">peak ${tok(max)}</span></div>`;
+  $("#heat-chart").innerHTML = html;
+
+  $("#heat-table").innerHTML = `<table><thead><tr><th>Day</th>${
+    Array.from({length:24},(_,h)=>`<th>${h}</th>`).join("")}<th>Total</th></tr></thead><tbody>${
+    grid.map((row,d)=>`<tr><td>${DOW[d]}</td>${row.map(v=>`<td>${v?tok(v):"—"}</td>`).join("")}<td>${tok(row.reduce((a,b)=>a+b,0))}</td></tr>`).join("")
+  }</tbody></table>`;
+}
+
+/* ============================================================== CONTROLS */
+function seg(host, items, cur, onPick) {
+  host.innerHTML = items.map(i =>
+    `<button type="button" data-v="${i.id}" aria-pressed="${i.id===cur}">${i.label}</button>`).join("");
+  host.onclick = e => {
+    const b = e.target.closest("button"); if (!b) return;
+    onPick(b.dataset.v);
+  };
+}
+function renderAll() {
+  renderTiles(); renderHero(); renderIO();
+  renderModels(); renderProjects(); renderTools(); renderHeat();
+  const {from,to} = activeDates();
+  $("#range-note").textContent = `${fmtFull(from)} – ${fmtFull(to)}`;
+  writeHash();
+}
+function mountControls() {
+  const bindRange = () => seg($("#range"), RANGES, state.range, v => {
+    state.range = v; bindRange(); renderAll(); });
+  bindRange();
+
+  const bindSplit = () => seg($("#hero-split"),
+    [{id:"model",label:"By model"},{id:"type",label:"By token type"}], state.split,
+    v => { state.split = v; bindSplit(); renderHero(); writeHash(); });
+  bindSplit();
+
+  const bindMetric = () => seg($("#hero-metric"),
+    [{id:"tokens",label:"Tokens"},{id:"cost",label:"Cost"}], state.metric,
+    v => { state.metric = v; bindMetric(); renderHero(); writeHash(); });
+  bindMetric();
+
+  const bindProj = () => seg($("#proj-metric"),
+    [{id:"cost",label:"Cost"},{id:"tokens",label:"Tokens"},{id:"messages",label:"Messages"}],
+    state.proj, v => { state.proj = v; bindProj(); renderProjects(); writeHash(); });
+  bindProj();
+
+  document.querySelectorAll("[data-tv]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.tv;
+      const chart = $(`#${id}-chart`), table = $(`#${id}-table`);
+      const showTable = table.classList.contains("hidden");
+      table.classList.toggle("hidden", !showTable);
+      chart.classList.toggle("hidden", showTable);
+      btn.setAttribute("aria-pressed", String(showTable));
+      btn.textContent = showTable ? "Chart" : "Table";
+    });
+  });
+
+  const tbtn = $("#theme");
+  const paintTheme = () => {
+    document.documentElement.dataset.theme = state.theme;
+    tbtn.textContent = state.theme === "dark" ? "Light" : "Dark";
+    tbtn.setAttribute("aria-pressed", String(state.theme === "light"));
+  };
+  paintTheme();
+  tbtn.addEventListener("click", () => {
+    state.theme = state.theme === "dark" ? "light" : "dark";
+    paintTheme();
+    renderAll();                                  // series colours are per-mode
+  });
+}
+
+/* ---------------------------------------------------------------- header */
+const gen = new Date(D.generated_at);
+$("#hdr-meta").textContent =
+  `${fmtDay(D.range.start)} – ${fmtDay(D.range.end)} · ${D.rows.length} daily records`;
+$("#foot-meta").innerHTML =
+  `Generated ${gen.toLocaleString("en-US",{dateStyle:"medium",timeStyle:"short"})} from
+   ${D.months.length} month file${D.months.length>1?"s":""} in <code>data/monthly/</code>.
+   Costs are what these tokens <em>would</em> cost on the public Claude API &mdash;
+   a Claude Code subscription is billed differently.`;
+
+mountControls();
+renderAll();
+let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(renderAll, 140); });
+})();
+</script>
+</body>
+</html>

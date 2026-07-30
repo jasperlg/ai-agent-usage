@@ -1,0 +1,14 @@
+# Everything generated from your own transcripts stays local. The aggregates
+# name real projects and carry their cost, and jobs.html is an inventory of this
+# specific machine -- none of that belongs in a repo that might one day be public.
+#
+# Nothing here is recoverable from the repo: regenerate it with
+#   python3 scripts/ingest.py && python3 scripts/jobs.py
+# A fork therefore starts empty, which is the intended state.
+data/
+dashboard.html
+jobs.html
+
+__pycache__/
+*.pyc
+.DS_Store
