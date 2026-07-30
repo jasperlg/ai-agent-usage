@@ -210,8 +210,11 @@ caching saved you (about 84% off the uncached price).
   with an "est. rate" pill. Correct it in `config/pricing.json` when the real rate
   is known; it is ~32% of the total here, so the number moves.
 - **History only goes as far back as your transcripts.** Claude Code rotates old
-  ones away. The monthly files in `data/` are durable, so committing them
-  preserves history the transcripts no longer hold.
+  ones away, and past that window `data/monthly/*.json` is the only surviving
+  record — so back that directory up somewhere. Not here: it is gitignored,
+  because those files name real projects and carry their cost. Everything under
+  `data/`, plus the two generated pages, stays out of the repo; a clone starts
+  empty and fills from its own transcripts.
 - Days are bucketed in your **local timezone**; the raw timestamps are UTC.
 
 ## Palette
