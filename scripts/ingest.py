@@ -131,7 +131,7 @@ def new_side() -> dict:
 
 def scan(files, wanted_month: str | None, pricing: dict):
     """One pass over the transcripts. Returns (facts, side_stats, diagnostics)."""
-    seen: set[str] = set()
+    seen: dict[str, tuple] = {}
     facts: dict[tuple, dict] = defaultdict(zeros)
     side: dict[str, dict] = defaultdict(new_side)
     unknown: set[str] = set()
@@ -181,10 +181,18 @@ def scan(files, wanted_month: str | None, pricing: dict):
                     continue
 
                 mid = msg.get("id") or f"{path}:{rec.get('uuid')}"
+                out = int(usage.get("output_tokens") or 0)
                 if mid in seen:
+                    # A streamed message is written once per content block, and
+                    # only the last copy carries its final output count. Input
+                    # and cache figures are identical in every copy.
                     dupes += 1
+                    b, hours, counted = seen[mid]
+                    if out > counted:
+                        b["output"] += out - counted
+                        hours[0][hours[1]] += out - counted
+                        seen[mid] = (b, hours, out)
                     continue
-                seen.add(mid)
 
                 model = canonical_model(msg.get("model") or "", pricing)
                 if model is None:
@@ -201,7 +209,6 @@ def scan(files, wanted_month: str | None, pricing: dict):
                     w5m = max(0, total_write - w1h)
 
                 inp = int(usage.get("input_tokens") or 0)
-                out = int(usage.get("output_tokens") or 0)
                 read = int(usage.get("cache_read_input_tokens") or 0)
 
                 b = facts[(date, project_name(rec.get("cwd", "")), model)]
@@ -213,6 +220,7 @@ def scan(files, wanted_month: str | None, pricing: dict):
                 b["messages"] += 1
 
                 s["hours"][date][dt.hour] += inp + out + w5m + w1h + read
+                seen[mid] = (b, (s["hours"][date], dt.hour), out)
 
     return facts, side, {"unique": len(seen), "dupes": dupes, "unknown": unknown}
 

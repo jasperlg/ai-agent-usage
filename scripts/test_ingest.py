@@ -153,5 +153,25 @@ class CodexTests(unittest.TestCase):
         self.assertEqual(payload["agents"]["claude"]["sessions_daily"][date], 2)
 
 
+class ClaudeTests(unittest.TestCase):
+    def test_streamed_copies_count_once_with_their_final_output(self):
+        def copy(out, uuid):
+            return {"type": "assistant", "uuid": uuid, "timestamp": "2026-08-15T12:00:00Z",
+                    "cwd": "/projects/example", "sessionId": "s1",
+                    "message": {"id": "msg1", "model": "claude-opus-5-5", "content": [],
+                                "usage": {"input_tokens": 3, "output_tokens": out,
+                                          "cache_read_input_tokens": 1000}}}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "session.jsonl"
+            path.write_text("\n".join(json.dumps(r) for r in
+                                      [copy(1, "a"), copy(40, "b"), copy(40, "c")]))
+            facts, side, diag = ingest.scan([path], None, ingest.load_pricing())
+        row = next(iter(facts.values()))
+        self.assertEqual((row["messages"], row["input"], row["output"], row["cache_read"]),
+                         (1, 3, 40, 1000))
+        self.assertEqual(sum(side["2026-08"]["hours"]["2026-08-15"]), 1043)
+        self.assertEqual((diag["unique"], diag["dupes"]), (1, 2))
+
+
 if __name__ == "__main__":
     unittest.main()
