@@ -5,7 +5,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Claude Code · Usage &amp; Cost</title>
+<title>AI agents · Usage &amp; Cost</title>
 <style>
 /* ---------------------------------------------------------------------------
    Design tokens. Values are the dataviz reference palette, validated with
@@ -186,7 +186,7 @@ footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
 <div class="top"><div class="wrap top-in">
   <div class="brand">
     <span class="dot"></span>
-    <h1>Claude Code · Usage &amp; Cost</h1>
+    <h1>AI agents · Usage &amp; Cost</h1>
     <span class="meta" id="hdr-meta"></span>
   </div>
   <button class="ghost" id="theme" aria-pressed="false">Light</button>
@@ -196,6 +196,8 @@ footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
 
   <!-- one filter row, scoping every chart below -->
   <div class="filters">
+    <span class="lbl">Agent</span>
+    <div class="seg" id="agent" role="group" aria-label="Agent"></div>
     <span class="lbl">Range</span>
     <div class="seg" id="range" role="group" aria-label="Date range"></div>
     <span class="meta" id="range-note" style="color:var(--muted);font-size:12.5px"></span>
@@ -208,12 +210,13 @@ footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
     <section class="card">
       <div class="card-hd">
         <div>
-          <h2>Token consumption per day</h2>
+          <h2 id="hero-title">API cost over time</h2>
           <p class="sub" id="hero-sub"></p>
         </div>
         <div class="card-tools">
           <div class="seg" id="hero-split" role="group" aria-label="Split by"></div>
           <div class="seg" id="hero-metric" role="group" aria-label="Metric"></div>
+          <div class="seg" id="hero-period" role="group" aria-label="Group time by"></div>
           <button class="ghost" data-tv="hero" aria-pressed="false">Table</button>
         </div>
       </div>
@@ -312,7 +315,7 @@ footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
 (() => {
 "use strict";
 const D = window.USAGE_DATA;
-if (!D) {
+if (!D || !D.rows.length) {
   document.body.innerHTML =
     '<div style="max-width:640px;margin:80px auto;padding:0 24px;font:15px/1.6 system-ui">' +
     '<h1 style="font-size:19px">No usage data in this file</h1>' +
@@ -373,13 +376,14 @@ const COLS  = D.columns;
 const FACTS = D.rows.map(r => { const o = {}; COLS.forEach((c,i) => o[c] = r[i]); return o; });
 const MULT  = D.cache_multipliers;
 const rateOf = m => D.pricing[m] || D.fallback;
+const readRate = p => p.cached_input ?? p.input * MULT.read;
 
 function costOf(f) {
   const p = rateOf(f.model);
   return (f.input * p.input + f.output * p.output
         + f.cache_write_5m * p.input * MULT.write_5m
         + f.cache_write_1h * p.input * MULT.write_1h
-        + f.cache_read     * p.input * MULT.read) / 1e6;
+        + f.cache_read     * readRate(p)) / 1e6;
 }
 /* what the same tokens would cost with no cache discount at all */
 function uncachedCostOf(f) {
@@ -422,17 +426,21 @@ const RANGES = [
   {id:"7",   label:"7 days"},
   {id:"14",  label:"14 days"},
   {id:"30",  label:"30 days"},
+  {id:"90",  label:"90 days"},
+  {id:"180", label:"6 months"},
+  {id:"365", label:"1 year"},
   {id:"all", label:"All time"},
 ];
-/* State is mirrored into location.hash so any view is shareable and bookmarkable. */
-const state = { range:"all", split:"model", metric:"tokens", proj:"cost", theme:"dark" };
+/* Keep view options in the URL; each visit starts with 30 days and cost. */
+const state = { agent:"all", range:"30", split:"model", metric:"cost", period:"auto", proj:"cost", theme:"dark" };
 const ALLOWED = {
-  range: RANGES.map(r => r.id), split:["model","type"],
+  agent:["all","claude","codex"], range: RANGES.map(r => r.id), split:["model","type"],
   metric:["tokens","cost"], proj:["cost","tokens","messages"], theme:["dark","light"],
+  period:["auto","day","week","month"],
 };
 (function readHash() {
   new URLSearchParams(location.hash.slice(1)).forEach((v,k) => {
-    if (ALLOWED[k] && ALLOWED[k].includes(v)) state[k] = v;
+    if (k !== "range" && k !== "metric" && ALLOWED[k] && ALLOWED[k].includes(v)) state[k] = v;
   });
   document.documentElement.dataset.theme = state.theme;
 })();
@@ -451,8 +459,42 @@ function calendarDays() {
   for (let d = from; d <= to; d = addDays(d,1)) out.push(d);
   return out;
 }
+function timePeriods() {
+  const days = calendarDays();
+  const unit = state.period === "auto"
+    ? (days.length <= 45 ? "day" : days.length <= 180 ? "week" : "month")
+    : state.period;
+  const buckets = new Map();
+  days.forEach(date => {
+    const d = parseDate(date);
+    const key = unit === "month" ? date.slice(0,7) + "-01"
+      : unit === "week" ? addDays(date, -((d.getDay()+6)%7)) : date;
+    if (!buckets.has(key)) buckets.set(key, {key, from:date, to:date});
+    buckets.get(key).to = date;
+  });
+  const fullDate = date => parseDate(date).toLocaleDateString("en-US", {
+    month:"short", day:"numeric", year:"numeric" });
+  const periods = [...buckets.values()].map(p => {
+    const d = parseDate(p.key);
+    const fullEnd = unit === "month"
+      ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${new Date(d.getFullYear(),d.getMonth()+1,0).getDate()}`
+      : unit === "week" ? addDays(p.key,6) : p.key;
+    const partial = p.from !== p.key || p.to !== fullEnd;
+    const monthLabel = d.toLocaleDateString("en-US", {month:"short", year:"numeric"});
+    const dates = p.from === p.to ? fullDate(p.from) : `${fullDate(p.from)} to ${fullDate(p.to)}`;
+    const label = unit === "month" && !partial ? monthLabel
+      : `${dates}${partial ? " (partial)" : ""}`;
+    return {...p, label, partial, tick:unit === "month" ? monthLabel : fmtDay(p.from)};
+  });
+  const keysByDay = new Map();
+  periods.forEach(p => {
+    for (let d = p.from; d <= p.to; d = addDays(d,1)) keysByDay.set(d, p.key);
+  });
+  return {unit, periods, keysByDay};
+}
 const inRange = f => { const {from,to} = activeDates(); return f.date >= from && f.date <= to; };
-const slice = () => FACTS.filter(inRange);
+const slice = () => FACTS.filter(f => inRange(f) && (state.agent === "all" || f.agent === state.agent));
+const sideData = () => state.agent === "all" ? D : (D.agents?.[state.agent] || {});
 
 function groupSum(rows, keyFn) {
   const g = {};
@@ -492,16 +534,17 @@ function renderTiles() {
   const cacheRead = sum("cache_read");
   const {from,to} = activeDates();
   let sessions = 0, userMsgs = 0;
-  Object.entries(D.sessions_daily).forEach(([d,n]) => { if (d>=from && d<=to) sessions += n; });
-  Object.entries(D.user_messages_daily).forEach(([d,n]) => { if (d>=from && d<=to) userMsgs += n; });
+  Object.entries(sideData().sessions_daily || {}).forEach(([d,n]) => { if (d>=from && d<=to) sessions += n; });
+  Object.entries(sideData().user_messages_daily || {}).forEach(([d,n]) => { if (d>=from && d<=to) userMsgs += n; });
 
   const top = Object.entries(groupSum(rows, f => f.project)).sort((a,b) => b[1].cost - a[1].cost)[0];
   const perDay = days.size ? cost/days.size : 0;
   const saved = uncached - cost;
+  const unpriced = rows.filter(f => rateOf(f.model).unpriced).reduce((n,f) => n + f.total, 0);
 
   const tiles = [
     { k:"API-equivalent cost", v:money(cost),
-      s:`<b>${money0(perDay)}</b> per active day` },
+      s:unpriced ? `<b>${tok(unpriced)}</b> tokens excluded, no rate` : `<b>${money0(perDay)}</b> per active day` },
     { k:"Tokens processed", v:tok(inSide+out),
       s:`<b>${tok(cacheRead)}</b> of it cache reads` },
     { k:"Output tokens", v:tok(out),
@@ -518,7 +561,7 @@ function renderTiles() {
   ).join("");
 }
 
-/* ========================================================== HERO: per day */
+/* ========================================================== USAGE TREND */
 function heroSeries() {
   return state.split === "model"
     ? MODEL_KEYS.map(m => ({ id:m, label:modelLabel(m), color:CSS(MODEL_COLOR[m]) }))
@@ -532,27 +575,32 @@ function heroValue(f, sid) {
   const tokens = f[sid];
   if (state.metric === "tokens") return tokens;
   const p = rateOf(f.model);
-  return sid === "output" ? tokens*p.output/1e6 : tokens*p.input*TYPE_RATE[sid]/1e6;
+  return tokens * (sid === "output" ? p.output : sid === "cache_read" ? readRate(p) : p.input*TYPE_RATE[sid]) / 1e6;
 }
 function renderHero() {
   const host = $("#hero-chart");
   host.innerHTML = "";
-  const series = heroSeries(), days = calendarDays(), rows = slice();
+  const series = heroSeries(), rows = slice();
+  const {unit, periods, keysByDay} = timePeriods();
+  const unitLabel = {day:"Daily",week:"Weekly",month:"Monthly"}[unit];
+  $("#hero-title").textContent = `${state.metric === "cost" ? "API cost" : "Token consumption"} per ${unit}`;
+  seg($("#hero-period"),
+    [{id:"auto",label:`Auto (${unit})`},{id:"day",label:"Day"},{id:"week",label:"Week"},{id:"month",label:"Month"}],
+    state.period, v => { state.period = v; renderHero(); writeHash(); });
   const fmt = state.metric === "cost" ? money : tok;
 
-  // day -> series -> value
-  const byDay = {};
-  days.forEach(d => { byDay[d] = {}; series.forEach(s => byDay[d][s.id] = 0); });
-  rows.forEach(f => { series.forEach(s => { byDay[f.date][s.id] += heroValue(f, s.id); }); });
+  const byPeriod = {};
+  periods.forEach(p => { byPeriod[p.key] = {}; series.forEach(s => byPeriod[p.key][s.id] = 0); });
+  rows.forEach(f => { series.forEach(s => { byPeriod[keysByDay.get(f.date)][s.id] += heroValue(f, s.id); }); });
 
-  const totals = days.map(d => series.reduce((a,s) => a + byDay[d][s.id], 0));
+  const totals = periods.map(p => series.reduce((a,s) => a + byPeriod[p.key][s.id], 0));
   const {max, ticks} = niceTicks(Math.max(...totals, 1));
 
   const W = host.clientWidth || 900, H = 300;
   const M = { t:8, r:8, b:26, l:52 };
   const iw = W - M.l - M.r, ih = H - M.t - M.b;
   const svg = el("svg", { viewBox:`0 0 ${W} ${H}`, height:H,
-    role:"img", "aria-label":`Daily ${state.metric} split by ${state.split}` }, host);
+    role:"img", "aria-label":`${unitLabel} ${state.metric} split by ${state.split}` }, host);
 
   ticks.forEach(v => {
     const y = M.t + ih - (v/max)*ih;
@@ -562,20 +610,20 @@ function renderHero() {
   });
   el("line", { class:"axis", x1:M.l, x2:M.l+iw, y1:M.t+ih, y2:M.t+ih }, svg);
 
-  const slot = iw / days.length, bw = Math.max(1, slot - 2);   // 2px surface gap
+  const slot = iw / periods.length, bw = Math.max(1, slot - 2);   // 2px surface gap
   const tip = mkTip(host);
-  const labelEvery = Math.ceil(days.length / 10);
+  const labelEvery = Math.ceil(periods.length / (unit === "month" ? 8 : 10));
 
-  days.forEach((d, i) => {
+  periods.forEach((p, i) => {
     const x = M.l + i*slot + 1;
     if (i % labelEvery === 0) {
       const tx = el("text", { class:"tick", x:x+bw/2, y:M.t+ih+16, "text-anchor":"middle" }, svg);
-      tx.textContent = fmtDay(d);
+      tx.textContent = p.tick;
     }
     const band = el("rect", { class:"band", x:M.l+i*slot, y:M.t, width:slot, height:ih }, svg);
 
     let acc = 0;
-    const stack = series.map(s => ({ s, v:byDay[d][s.id] })).filter(o => o.v > 0);
+    const stack = series.map(s => ({ s, v:byPeriod[p.key][s.id] })).filter(o => o.v > 0);
     stack.forEach((o, j) => {
       const h = (o.v/max)*ih;
       const y = M.t + ih - acc - h;
@@ -588,13 +636,13 @@ function renderHero() {
     });
 
     const total = totals[i];
-    const html = `<div class="t">${fmtFull(d)}</div>` +
+    const html = `<div class="t">${p.label}</div>` +
       (stack.length ? stack.slice().reverse().map(o => tipRow(o.s.color, o.s.label, fmt(o.v))).join("")
                     : `<div class="r"><span class="n">No activity</span></div>`) +
       (stack.length > 1 ? `<div class="r tot"><span class="n">Total</span><b>${fmt(total)}</b></div>` : "");
     const hit = el("rect", { class:"hit", x:M.l+i*slot, y:M.t, width:slot, height:ih,
                              tabindex:"0", role:"button",
-                             "aria-label":`${fmtFull(d)}: ${fmt(total)}` }, svg);
+                             "aria-label":`${p.label}: ${fmt(total)}` }, svg);
     const on  = () => { band.classList.add("on");
       tip.show(html, M.l + i*slot + slot/2, M.t + ih - acc); };
     const off = () => { band.classList.remove("on"); tip.hide(); };
@@ -604,25 +652,26 @@ function renderHero() {
 
   // legend, with totals so identity is never colour-alone
   const seriesTotals = {};
-  series.forEach(s => seriesTotals[s.id] = days.reduce((a,d) => a + byDay[d][s.id], 0));
+  series.forEach(s => seriesTotals[s.id] = periods.reduce((a,p) => a + byPeriod[p.key][s.id], 0));
   $("#hero-legend").innerHTML = series
     .filter(s => seriesTotals[s.id] > 0)
     .sort((a,b) => seriesTotals[b.id] - seriesTotals[a.id])
     .map(s => `<span class="it"><span class="sw" style="background:${s.color}"></span>${esc(s.label)} <b>${fmt(seriesTotals[s.id])}</b></span>`)
     .join("");
 
-  $("#hero-sub").textContent = state.split === "model"
+  $("#hero-sub").textContent = `${unitLabel} totals. ` + (state.split === "model"
     ? "Stacked by model. Colours are fixed per model across every chart."
-    : "Stacked by how each token was billed — cached reads are 10× cheaper than fresh input.";
-  $("#hero-note").innerHTML = state.metric === "tokens"
+    : "Stacked by token type, with cached input priced separately.");
+  const periodNote = unit === "day" ? "" : `${unit === "week" ? "Weeks start on Monday. " : "Calendar months. "}Partial periods include only dates within the selected range. `;
+  $("#hero-note").innerHTML = periodNote + (state.metric === "tokens"
     ? `Cache reads dominate raw volume. Switch to <b>Cost</b> to see what actually drives spend.`
-    : `Priced at public API rates: cache reads ×${MULT.read}, 1h writes ×${MULT.write_1h}, 5m writes ×${MULT.write_5m}.`;
+    : "Estimated at standard API rates. Cache reads use the configured model rate. Unknown Codex rates are excluded.");
 
   // table twin
-  $("#hero-table").innerHTML = `<table><thead><tr><th>Day</th>${
+  $("#hero-table").innerHTML = `<table><thead><tr><th>${{day:"Day",week:"Week",month:"Month"}[unit]}</th>${
     series.map(s => `<th>${esc(s.label)}</th>`).join("")}<th>Total</th></tr></thead><tbody>${
-    days.map((d,i) => `<tr><td>${fmtFull(d)}</td>${
-      series.map(s => `<td>${byDay[d][s.id] ? fmt(byDay[d][s.id]) : "—"}</td>`).join("")
+    periods.map((p,i) => `<tr><td>${p.label}</td>${
+      series.map(s => `<td>${byPeriod[p.key][s.id] ? fmt(byPeriod[p.key][s.id]) : "0"}</td>`).join("")
     }<td>${fmt(totals[i])}</td></tr>`).join("")}</tbody><tfoot><tr><td>Total</td>${
     series.map(s => `<td>${fmt(seriesTotals[s.id])}</td>`).join("")
     }<td>${fmt(totals.reduce((a,b) => a+b, 0))}</td></tr></tfoot></table>`;
@@ -699,7 +748,7 @@ function renderIO() {
 function renderModels() {
   const host = $("#donut-chart"); host.innerHTML = "";
   const g = groupSum(slice(), f => f.model);
-  const items = MODEL_KEYS.filter(m => g[m] && g[m].cost > 0)
+  const items = MODEL_KEYS.filter(m => g[m] && g[m].total > 0)
     .map(m => ({ id:m, label:modelLabel(m), color:CSS(MODEL_COLOR[m]), ...g[m] }));
   const total = items.reduce((a,i) => a + i.cost, 0);
 
@@ -710,7 +759,7 @@ function renderModels() {
   let a0 = -Math.PI/2;
   const PAD = total ? 0.018 : 0;                       // ~2px surface gap between arcs
   items.forEach(it => {
-    const sweep = (it.cost/total) * Math.PI*2;
+    const sweep = (total ? it.cost/total : 0) * Math.PI*2;
     // Never let the gap swallow a slice: a tiny share still draws a visible sliver
     // (its exact value is carried by the table below).
     const pad = Math.min(PAD, sweep * 0.4);
@@ -741,10 +790,10 @@ function renderModels() {
     </tr></thead><tbody>${items.map(it => {
       const p = rateOf(it.id);
       return `<tr>
-        <td><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2.5px;background:${it.color};margin-right:7px"></span>${esc(it.label)}${p.assumed?' <span class="pill" title="'+esc(p.note||"")+'">est. rate</span>':""}</td>
-        <td>$${p.input}/$${p.output}</td>
+        <td><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2.5px;background:${it.color};margin-right:7px"></span>${esc(it.label)}${p.unpriced?' <span class="pill">no rate</span>':p.assumed?' <span class="pill" title="'+esc(p.note||"")+'">est. rate</span>':""}</td>
+        <td>${p.unpriced ? "Not configured" : `$${p.input}/$${p.output}`}</td>
         <td>${tok(it.total)}</td>
-        <td>${money(it.cost)}</td>
+        <td>${p.unpriced ? "Excluded" : money(it.cost)}</td>
         <td>${pct(it.cost,total).toFixed(1)}%</td></tr>`;
     }).join("")}</tbody><tfoot><tr><td>Total</td><td></td>
       <td>${tok(items.reduce((a,i)=>a+i.total,0))}</td><td>${money(total)}</td><td>100%</td>
@@ -778,7 +827,7 @@ function renderProjects() {
 }
 function renderTools() {
   const {from,to} = activeDates(), t = {};
-  Object.entries(D.tools_daily).forEach(([d,m]) => {
+  Object.entries(sideData().tools_daily || {}).forEach(([d,m]) => {
     if (d < from || d > to) return;
     Object.entries(m).forEach(([k,n]) => t[k] = (t[k]||0) + n);
   });
@@ -796,7 +845,7 @@ const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 function renderHeat() {
   const {from,to} = activeDates();
   const grid = Array.from({length:7}, () => new Array(24).fill(0));
-  Object.entries(D.hours_daily).forEach(([d,hours]) => {
+  Object.entries(sideData().hours_daily || {}).forEach(([d,hours]) => {
     if (d < from || d > to) return;
     const dow = (parseDate(d).getDay() + 6) % 7;          // Mon = 0
     hours.forEach((v,h) => grid[dow][h] += v);
@@ -845,6 +894,10 @@ function renderAll() {
   writeHash();
 }
 function mountControls() {
+  const bindAgent = () => seg($("#agent"),
+    [{id:"all",label:"All agents"},{id:"claude",label:"Claude Code"},{id:"codex",label:"Codex"}],
+    state.agent, v => { state.agent = v; bindAgent(); renderAll(); });
+  bindAgent();
   const bindRange = () => seg($("#range"), RANGES, state.range, v => {
     state.range = v; bindRange(); renderAll(); });
   bindRange();
@@ -897,8 +950,9 @@ $("#hdr-meta").textContent =
 $("#foot-meta").innerHTML =
   `Generated ${gen.toLocaleString("en-US",{dateStyle:"medium",timeStyle:"short"})} from
    ${D.months.length} month file${D.months.length>1?"s":""} in <code>data/monthly/</code>.
-   Costs are what these tokens <em>would</em> cost on the public Claude API &mdash;
-   a Claude Code subscription is billed differently.`;
+   Costs estimate standard short-context API pricing for Claude Code and Codex.
+   Subscription fees, fast mode, long-context premiums and tool charges are not included.
+   Codex models without a configured rate are excluded from cost totals.`;
 
 mountControls();
 renderAll();

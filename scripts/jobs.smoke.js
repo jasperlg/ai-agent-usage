@@ -44,6 +44,10 @@ new vm.Script(src);
 
 const fresh = run(new Date(Date.now() - 3600e3).toISOString());
 const stale = run(new Date(Date.now() - 5 * 86400e3).toISOString());
+// The writing job runs hourly on weekdays only, so a page last written Friday
+// 23:15 is legitimately ~49h old by Monday 00:15. That must not raise the
+// banner, or it would cry wolf every weekend.
+const weekend = run(new Date(Date.now() - 49 * 3600e3).toISOString());
 
 const detail = fresh.groups.innerHTML;
 const checks = [
@@ -63,6 +67,7 @@ const checks = [
   ['tags it yours',             fresh.groups.innerHTML.includes('pill mine')],
   ['escapes html in values',    !fresh.groups.innerHTML.includes('<script')],
   ['banner hidden when fresh',  !fresh.age.className.includes('show')],
+  ['banner survives a weekend', !weekend.age.className.includes('show')],
   ['banner shown when stale',   stale.age.className.includes('show')],
   ['banner names the job',      stale.age.innerHTML.includes('ai-agent-usage.refresh')],
   ['banner counts 5 days',      stale.age.innerHTML.includes('5 days ago')],

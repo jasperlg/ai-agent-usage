@@ -41,8 +41,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 TEMPLATE = REPO / "scripts" / "jobs.template.html"
+KNOWN = REPO / "config" / "known-jobs.json"
 OUT = REPO / "jobs.html"
 HOME = Path.home()
+
+# Labels that are yours even when they are not in the catalog yet.
+MINE_PREFIXES = ("com.jasperlouage.", "com.mustry.")
 
 # (directory, group key, human title, subtitle)
 SOURCES = [
@@ -107,21 +111,52 @@ def launchctl_state() -> dict[str, dict]:
 # triggers
 # --------------------------------------------------------------------------- #
 
+def _when_text(cal: dict) -> str:
+    """The time half of a StartCalendarInterval. Absent keys are wildcards, so
+    a dict carrying only Minute fires every hour."""
+    hour, minute = cal.get("Hour"), cal.get("Minute")
+    if hour is not None:
+        return f"{hour:02d}:{minute:02d}" if minute is not None else f"{hour:02d}:00"
+    if minute is not None:
+        return f":{minute:02d} past every hour"
+    return "every minute"
+
+
+def _at(cal: dict) -> str:
+    """Glue the time onto a day phrase. An hourly wildcard is not a time you
+    can be "at", so it gets a comma instead."""
+    return (" at " if "Hour" in cal else ", ") + _when_text(cal)
+
+
+def _weekday_span(entries: list) -> str | None:
+    """A run of dicts differing only in Weekday -> one phrase, or None.
+
+    launchd has no weekday range, so "hourly on weekdays" can only be spelled
+    as one dict per day. Printed literally that is five near-identical clauses
+    filling the trigger column; collapsed it is "Mon-Fri, :15 past every hour".
+    """
+    if len(entries) < 2 or any("Weekday" not in c for c in entries):
+        return None
+    rest = [{k: v for k, v in c.items() if k != "Weekday"} for c in entries]
+    if any(r != rest[0] for r in rest[1:]):          # differ by more than the day
+        return None
+    wd = sorted({c["Weekday"] % 7 for c in entries})  # launchd: Sunday is 0 or 7
+    if len(wd) != len(entries) or wd != list(range(wd[0], wd[-1] + 1)):
+        return None                                   # duplicated or non-contiguous
+    abbr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    return f"{abbr[wd[0]]}-{abbr[wd[-1]]}{_at(rest[0])}"
+
+
 def _cal_text(cal: dict) -> str:
     """One StartCalendarInterval dict -> English. Absent keys are wildcards."""
     days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-    hour, minute = cal.get("Hour"), cal.get("Minute")
-    when = f"{hour:02d}:{minute:02d}" if hour is not None and minute is not None else (
-        f"{hour:02d}:00" if hour is not None else
-        f":{minute:02d} past the hour" if minute is not None else "every minute")
-
     if "Weekday" in cal:
-        return f"{days[cal['Weekday'] % 7]}s at {when}"
+        return f"{days[cal['Weekday'] % 7]}s{_at(cal)}"
     if "Day" in cal:
-        return f"day {cal['Day']} at {when}"
-    if hour is not None:
-        return f"daily at {when}"
-    return when
+        return f"day {cal['Day']}{_at(cal)}"
+    if "Hour" in cal:
+        return f"daily{_at(cal)}"
+    return _when_text(cal)
 
 
 def _interval_text(secs: int) -> str:
@@ -137,10 +172,11 @@ def describe(pl: dict) -> tuple[str, bool, int | None]:
     """-> (trigger text, is_on_a_timer, approximate period in seconds)."""
     cal = pl.get("StartCalendarInterval")
     if cal:
-        entries = cal if isinstance(cal, list) else [cal]
-        texts = [_cal_text(c) for c in entries if isinstance(c, dict)]
+        entries = [c for c in (cal if isinstance(cal, list) else [cal]) if isinstance(c, dict)]
+        span = _weekday_span(entries)
+        texts = [span] if span else [_cal_text(c) for c in entries]
         # Period drives the staleness check; assume daily unless it repeats more often.
-        period = DAY if len(texts) == 1 else max(DAY // max(len(texts), 1), 3600)
+        period = DAY if len(entries) == 1 else max(DAY // max(len(entries), 1), 3600)
         return ("; ".join(texts) or "calendar", True, period)
 
     iv = pl.get("StartInterval")
@@ -315,6 +351,40 @@ def inspect_file(path_str: str, want_signature: bool) -> dict:
     return info
 
 
+def load_known() -> dict:
+    """label -> {why, mine?}. The catalog is the honest answer to
+    'why is this running' and 'is this one of mine'. Inferring either
+    from the command path is how jobs in other folders vanish."""
+    if not KNOWN.exists():
+        return {}
+    try:
+        data = json.loads(KNOWN.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def is_mine(label: str, cmd: str, known: dict) -> bool:
+    entry = known.get(label) or {}
+    if entry.get("mine") is False:
+        return False
+    if entry.get("mine") is True or label in known:
+        return True
+    if label.startswith(MINE_PREFIXES):
+        return True
+    return str(REPO) in cmd
+
+
+def why_of(label: str, pl: dict, known: dict) -> str | None:
+    entry = known.get(label) or {}
+    if isinstance(entry.get("why"), str) and entry["why"].strip():
+        return entry["why"].strip()
+    comment = pl.get("Comment")
+    if isinstance(comment, str) and comment.strip():
+        return comment.strip()
+    return None
+
+
 def command_of(pl: dict) -> str:
     args = pl.get("ProgramArguments")
     if isinstance(args, list) and args:
@@ -327,6 +397,7 @@ def collect(include_apple: bool) -> tuple[list[dict], int]:
     now_dt = datetime.now().astimezone()
     now = now_dt.timestamp()
     jobs, skipped = [], 0
+    known = load_known()
 
     for directory, group, _, _ in SOURCES:
         if not directory.is_dir():
@@ -359,7 +430,8 @@ def collect(include_apple: bool) -> tuple[list[dict], int]:
                     last_output = "no log yet"
 
             nxt = next_run(pl, now_dt)
-            mine = str(REPO) in cmd
+            mine = is_mine(label, cmd, known)
+            why = why_of(label, pl, known)
 
             uninstall = (f"/usr/bin/python3 {REPO / 'scripts' / 'jobs.py'} "
                          f"--remove {label}")
@@ -390,7 +462,7 @@ def collect(include_apple: bool) -> tuple[list[dict], int]:
                 # cannot see without sudo. Absence there says nothing about them,
                 # so don't let it be reported as "not loaded".
                 "status_unknown": group == "daemon" and not loaded,
-                "command": cmd, "mine": mine,
+                "command": cmd, "mine": mine, "why": why,
                 "uninstall": uninstall, "run": run_cmd,
                 "plist": json.dumps(plain(pl), indent=1, sort_keys=True),
                 "plist_path": str(path),
@@ -650,7 +722,9 @@ def render_text(jobs: list[dict]) -> None:
         flag = ("!" if j["stale"] or (j["last_exit"] or 0) > 0 else
                 "*" if j["mine"] else " ")
         print(f"  {flag} {j['label'][:52]:<52} {j['trigger'][:22]:<22} "
-              f"{(j['last_output'] or '—'):>9}")
+              f"{(j['last_output'] or '-'):>9}")
+        if j.get("why"):
+            print(f"      {j['why']}")
     print("\n  * yours   ! needs a look\n")
 
 

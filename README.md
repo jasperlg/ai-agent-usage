@@ -1,8 +1,8 @@
-# Claude Code · Usage & Cost
+# AI agents · Usage & Cost
 
-A self-contained dashboard for your local Claude Code usage: tokens per day,
-spend per model, which projects ate the time, and what it *would* cost billed at
-public Claude API rates.
+A self-contained dashboard for local Claude Code and Codex usage: tokens per
+day, spend per model, project activity, and estimated cost at public API rates.
+Use the agent filter to view Claude Code, Codex, or both together.
 
 No database, no server, no network calls. Aggregates are plain JSON files in
 `data/`, and `dashboard.html` is a single static page.
@@ -14,9 +14,11 @@ open dashboard.html           # look at it
 
 ## What it shows
 
-- **Tokens per day** — stacked bars, switchable between *by model* and *by token
-  type*, and between *tokens* and *cost*. The cost view is where output tokens
-  become visible; in token space they are 0.4% of volume.
+- **API cost over time**, shown as stacked bars by model or token type. Switch
+  between cost and tokens, and group by day, week or month. Auto uses daily bars
+  for up to 45 days, weekly bars for up to 180 days, and monthly bars for longer
+  ranges. Weeks start on Monday; months follow the calendar. Partial periods
+  show only dates inside the filter and are marked in tooltips and the table.
 - **Input vs output per day** — two panels with two scales, deliberately not one
   axis (input outweighs output ~240:1, so a shared scale erases output).
 - **Cost by model** — share of spend, with the rate applied to each model.
@@ -25,7 +27,8 @@ open dashboard.html           # look at it
 - **When you work** — token volume by weekday and hour, local time.
 
 Every chart has a table view, the date filter scopes all of them at once, and the
-current view is encoded in the URL hash so any view is shareable.
+view options are encoded in the URL hash. Each visit starts with the 30-day
+filter and Cost selected. You can change both while viewing the dashboard.
 
 ## Layout
 
@@ -67,11 +70,50 @@ window, `data/monthly/*.json` is the only record that survives, so a rescan must
 never be able to shrink it. `--replace` overrides that, for when a parser fix
 makes stored rows wrong.
 
+## Codex support
+
+The same refresh scans both agents automatically. Either can be installed on its
+own. Codex transcripts come from `~/.codex/sessions/` and
+`~/.codex/archived_sessions/`, including nested directories. Set `CODEX_HOME` if
+your Codex data lives elsewhere. `CLAUDE_PROJECTS_DIR` overrides the Claude path.
+The [official Codex documentation](https://learn.chatgpt.com/docs/reference/troubleshooting)
+lists these transcript locations.
+
+Codex response records are deduplicated by response ID. Older logs use
+`token_count` events, with repeated cumulative updates and copied fork history
+counted once. When a turn has response records, those take precedence over its
+cumulative events, whose counters can reset after compaction. Cached input is
+part of input, and reasoning output is part of output; neither is added twice.
+The current turn context supplies the model and project. Tool calls and logged
+user-message events feed the activity charts. Only locally available usage is
+included, so cloud runs without a local transcript are absent.
+
+Existing monthly files remain usable. Rows without an agent are treated as
+Claude Code, and a refresh preserves their historical totals. New files retain
+activity statistics per agent so the filter scopes every chart and summary tile.
+The hourly job picks up Codex automatically through `scripts/ingest.py`.
+
+OpenAI rates in `config/pricing.json` use
+[standard API pricing](https://developers.openai.com/api/docs/pricing), verified
+on 2026-09-18. These are short-context estimates, excluding fast mode,
+long-context premiums, regional surcharges and tool fees. Unknown Codex models,
+including internal and third-party models, retain their token counts but show
+"no rate" and are excluded from costs. Add a rate to the config to price them.
+The `cached_input` field sets a model's cache-read price per million tokens.
+
+Run the regression checks with:
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_*.py'
+node scripts/dashboard.smoke.js
+```
+
 ## Scheduled refresh
 
-A launchd agent runs `scripts/refresh.sh` (a full rescan) daily at 12:15, plus at
-login so a run missed while the machine was asleep still lands. Nothing here is
-worth an LLM invocation — it is one second of Python.
+A launchd agent runs `scripts/refresh.sh` (a full rescan) at **:15 past every
+hour, Monday to Friday**, plus at login so a run missed while the machine was
+asleep still lands. Nothing here is worth an LLM invocation — it is two seconds
+of Python.
 
 ```bash
 tail -20 ~/Library/Logs/ai-agent-usage-refresh.log      # what it has been doing
@@ -79,11 +121,32 @@ launchctl kickstart -p gui/$UID/com.jasperlouage.ai-agent-usage.refresh   # run 
 launchctl print gui/$UID/com.jasperlouage.ai-agent-usage.refresh | grep exit
 ```
 
-Daily rather than weekly because the retention window is the real deadline: a
-daily job can miss 30 runs before anything is lost, a weekly one only 4. To make
-it weekly, add `<key>Weekday</key><integer>1</integer>` to the
-`StartCalendarInterval` dict in
-`~/Library/LaunchAgents/com.jasperlouage.ai-agent-usage.refresh.plist`.
+Frequent rather than weekly because the retention window is the real deadline —
+Claude Code deletes transcripts after ~30 days, and every missed run spends part
+of that budget. Hourly also means the dashboard is never more than an hour behind
+the work you just did.
+
+The schedule is a **list** of `StartCalendarInterval` dicts, one per weekday,
+because launchd has no weekday range and an absent key is a wildcard: `Minute`
+alone, with no `Hour`, means ":15 past every hour". So five dicts express
+hourly-on-weekdays, not 120.
+
+```xml
+<dict><key>Weekday</key><integer>1</integer><key>Minute</key><integer>15</integer></dict>
+```
+
+Weekday runs Monday (1) to Friday (5); launchd counts Sunday as 0 or 7. Drop
+entries to narrow the days, or add `<key>Hour</key>` back to pin it to one time.
+
+Two gotchas, both learned here:
+
+- **Do not put `--` inside an XML comment** in the plist. `plutil -lint` and
+  launchd both accept it, but Python's `plistlib` — which `scripts/jobs.py` uses
+  to read every plist — rejects the file, so the job silently vanishes from
+  `jobs.html` while continuing to run.
+- Weekday-only means the longest healthy gap is **Fri 23:15 → Mon 00:15, ~49
+  hours**. `jobs.html` raises its own staleness banner past 2.5 days, chosen to
+  clear that gap; a tighter threshold would fire every Sunday.
 
 Uninstall:
 
@@ -93,6 +156,63 @@ rm ~/Library/LaunchAgents/com.jasperlouage.ai-agent-usage.refresh.plist
 ```
 
 After editing the plist, `bootout` then `bootstrap gui/$UID <plist>` to reload it.
+
+## Docker cleanup
+
+A second launchd agent, `com.jasperlouage.docker-gc`, runs `scripts/docker_gc.py
+--apply` daily at 12:15 and reclaims Docker disk. It deletes things, so:
+
+**A dry run is the default.** Without `--apply` nothing is removed, and the
+script prints every volume it would delete with its size. Only the launchd job
+passes `--apply`.
+
+```bash
+python3 scripts/docker_gc.py                      # show what would go
+python3 scripts/docker_gc.py --apply              # actually reclaim
+tail -40 ~/Library/Logs/docker-gc.log             # what it has been doing
+launchctl kickstart -p gui/$UID/com.jasperlouage.docker-gc    # run now
+```
+
+What it removes, in the order it matters:
+
+| | policy | why |
+|---|---|---|
+| Stopped containers | older than 30d | first, because a stopped container counts as an image reference — pruning images before them spares every image they pin |
+| Anonymous volumes | all unreferenced | 64-hex names nobody chose; `docker volume prune` already means anonymous-only, and this never passes `-a` |
+| Named volumes | 60d with no writes | compose volumes — gateway config, dev databases — for stacks that are merely stopped |
+| Images | unused, built 30d+ ago | `until` filters on *build* date, not last use, since Docker records no last-use |
+| Build cache | capped at 8 GB, LRU | see below |
+
+The named-volume rule is the one worth understanding. "Idle" is the newest file
+mtime *inside* the volume, not the volume's `CreatedAt` — creation date says
+nothing about whether a stack still matters, while a gateway writes logs and its
+internal db continuously when up, so the newest mtime is genuinely "when did this
+stack last run". A single `alpine` container mounts every candidate read-only at
+once and compares against a reference file, rather than paying 80 container
+startups. Anything unmeasurable is kept: a probe failure keeps the volume.
+
+To spare a volume regardless of idle time, add a regex to `KEEP` at the top of
+the script. Worth doing for any volume whose data is *seeded* rather than
+generated — a restored database that is never written to looks idle from outside
+no matter how current it is.
+
+Build cache is capped by size rather than age because an age filter barely works:
+`--filter until=168h` reclaimed 24.8 MB out of 20 GB here, since the bulk sat in
+reusable cache mounts (six 2.8 GB `go mod download` layers last touched a year
+ago) that only `--max-used-space` evicts. The cap keeps the most recently used
+8 GB and drops the rest.
+
+Unlike the refresh agent this one sets **no `RunAtLoad`** — it deletes, and
+nothing about it is urgent enough to fire at every login on top of the daily run.
+A missed 12:15 still runs once the machine wakes. If Docker is not running the
+script logs that and exits; it never starts Docker itself.
+
+Uninstall:
+
+```bash
+launchctl bootout gui/$UID/com.jasperlouage.docker-gc
+rm ~/Library/LaunchAgents/com.jasperlouage.docker-gc.plist
+```
 
 ## Seeing every job on the machine
 
@@ -155,9 +275,15 @@ boundary, and it is deliberate.
 `launchctl list` is not a substitute: it prints several hundred labels, and nearly
 all of them are on-demand helpers that only wake when something calls them. This
 filters to the keys that actually create a timer (`StartCalendarInterval`,
-`StartInterval`) and puts liveness next to each one — last exit code from
+`StartInterval`) and puts liveness next to each one: last exit code from
 launchctl, plus the mtime of whatever log the job declares, since a schedule that
 has quietly died is indistinguishable from a healthy one otherwise.
+
+**Yours, and why it runs.** A job is marked yours when it is in
+`config/known-jobs.json`, or its label starts with `com.jasperlouage.` /
+`com.mustry.`. The catalog also holds the one-line *why* shown under the label.
+Add a new personal job there; do not infer it from the command path (that is
+how anything outside this repo used to vanish from the count).
 
 Apple's own jobs are hidden by default as noise; the page states how many it
 dropped rather than pretending the list is complete.
@@ -203,8 +329,8 @@ caching saved you (about 84% off the uncached price).
 ## Caveats
 
 - **Costs are hypothetical.** They are what these tokens would cost on the public
-  Claude API. A Claude Code subscription is billed differently — treat this as a
-  measure of workload, not an invoice.
+  Anthropic and OpenAI APIs. Claude Code and Codex subscriptions are billed
+  differently. Treat this as a measure of workload, not an invoice.
 - **`claude-opus-5` has an assumed rate.** It is not in the published pricing
   table this was built against, so it is billed at Opus-tier ($5/$25) and flagged
   with an "est. rate" pill. Correct it in `config/pricing.json` when the real rate

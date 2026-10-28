@@ -93,6 +93,8 @@ tbody tr:hover { background:var(--surface-2); }
 .trunc { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .jobline { display:flex; align-items:center; gap:7px; }
 .jobline .lbl { font-weight:560; min-width:0; }
+.why { color:var(--ink-2); font-size:12.5px; margin-top:2px; line-height:1.4;
+       white-space:normal; }
 .cmd { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px;
        color:var(--muted); margin-top:2px; }
 /* Schedules wrap rather than truncate: "Wednesdays at 19:35" ellipsised to
@@ -166,9 +168,10 @@ tr.det > td { padding:2px 13px 18px; background:var(--surface-2); }
     <h1>Scheduled jobs</h1>
     <span class="meta" id="meta"></span>
   </div>
-  <input type="search" id="q" placeholder="Filter by name or command…">
+  <input type="search" id="q" placeholder="Filter by name, why, or command…">
   <div class="seg" id="filter">
     <button data-f="timed" aria-pressed="true">On a timer</button>
+    <button data-f="mine" aria-pressed="false">Yours</button>
     <button data-f="all" aria-pressed="false">Everything</button>
   </div>
   <div class="seg" id="theme">
@@ -194,13 +197,17 @@ tr.det > td { padding:2px 13px 18px; background:var(--surface-2); }
   document.getElementById('meta').textContent =
     D.generated_at.replace('T', ' ').slice(0, 16) + ' · ' + D.host;
 
-  // This page is written by the same daily job it reports on, so every row's
-  // "last output" would read "just now" no matter what. The page's own age is
-  // the signal that survives: if the job stopped, nothing regenerates this file.
+  // This page is written by the same job it reports on, so every row's "last
+  // output" would read "just now" no matter what. The page's own age is the
+  // signal that survives: if the job stopped, nothing regenerates this file.
   // Measured against the browser's live clock, so it keeps working unattended.
+  //
+  // 2.5 days, because that job runs hourly on weekdays only: the longest
+  // healthy gap is Fri 23:15 -> Mon 00:15, just over 2 days. A tighter
+  // threshold would raise this banner every Sunday and teach you to ignore it.
   (function () {
     var days = (Date.now() - new Date(D.generated_at).getTime()) / 86400000;
-    if (!(days > 1.5)) return;
+    if (!(days > 2.5)) return;
     var el = document.getElementById('age');
     el.className = 'age show';
     el.innerHTML = 'This page was generated <strong>' + Math.floor(days) + ' days ago</strong>. ' +
@@ -270,8 +277,9 @@ tr.det > td { padding:2px 13px 18px; background:var(--surface-2); }
 
   function visible(j) {
     if (state.f === 'timed' && !j.timed) return false;
+    if (state.f === 'mine' && !j.mine) return false;
     if (!state.q) return true;
-    var hay = (j.label + ' ' + j.command + ' ' + j.path).toLowerCase();
+    var hay = (j.label + ' ' + (j.why || '') + ' ' + j.command + ' ' + j.path).toLowerCase();
     return hay.indexOf(state.q) !== -1;
   }
 
@@ -311,7 +319,10 @@ tr.det > td { padding:2px 13px 18px; background:var(--surface-2); }
                   '<span class="lbl trunc" title="' + esc(j.label) + '">' + esc(j.label) + '</span>' +
                   (j.mine ? '<span class="pill mine">yours</span>' : '') +
                 '</div>' +
-                '<span class="cmd trunc" title="' + esc(j.command) + '">' + esc(j.command) + '</span></td>' +
+                (j.why
+                  ? '<div class="why">' + esc(j.why) + '</div>'
+                  : '<span class="cmd trunc" title="' + esc(j.command) + '">' + esc(j.command) + '</span>') +
+                '</td>' +
             '<td class="when">' + esc(j.trigger) + '</td>' +
             '<td class="when">' + esc(j.next || '—') + '</td>' +
             '<td class="ago">' + esc(j.last_output || '—') + '</td>' +
