@@ -1,5 +1,5 @@
 {
-  "_comment": "USD per 1,000,000 tokens. Anthropic and OpenAI API rates. Cache multipliers apply to input: 5m write = 1.25x, 1h write = 2.0x, read = 0.1x. A model's cached_input rate overrides the read multiplier.",
+  "_comment": "USD per 1,000,000 tokens. Anthropic and OpenAI API rates. Cache multipliers apply to input: 5m write = 1.25x, 1h write = 2.0x, read = 0.1x. A model's cached_input rate overrides the read multiplier. unpriced keeps a model out of cost; dismissed also stops the dashboard asking for its rate.",
   "_source": "claude-api skill reference, cached 2026-10-06",
   "_codex_source": "https://developers.openai.com/api/docs/pricing and linked model pages, verified 2026-10-28. Standard short-context rates, excluding fast mode, long-context premiums and tool fees.",
   "cache_multipliers": {
@@ -8,6 +8,8 @@
     "read": 0.1
   },
   "models": {
+    "codex-auto-review": { "input": 0.0, "output": 0.0, "unpriced": true, "dismissed": true, "label": "Codex auto-review",
+                           "note": "OpenAI publishes no rate. Counted in tokens, left out of cost, and not flagged on the dashboard." },
     "gpt-6-astra":     { "input": 10.0, "cached_input": 1.0, "output": 50.0, "label": "GPT-6 Astra" },
     "gpt-6.1-sol":     { "input": 2.0, "cached_input": 0.1, "output": 10.0, "label": "GPT-6.1 Sol" },
     "gpt-6.1-terra":   { "input": 1.0, "cached_input": 0.05, "output": 5.0, "label": "GPT-6.1 Terra" },

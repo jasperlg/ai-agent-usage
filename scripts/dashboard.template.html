@@ -618,7 +618,7 @@ function renderPriceNote() {
   const need = {};
   slice().forEach(f => {
     const p = rateOf(f.model);
-    if (!p.unpriced && !p.assumed) return;
+    if ((!p.unpriced && !p.assumed) || p.dismissed) return;
     const n = need[f.model] ||= {tokens:0, agent:f.agent, unpriced:!!p.unpriced};
     n.tokens += f.total;
   });
