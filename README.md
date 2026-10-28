@@ -110,52 +110,79 @@ node scripts/dashboard.smoke.js
 
 ## Scheduled refresh
 
-A launchd agent runs `scripts/refresh.sh` (a full rescan) at **:15 past every
-hour, Monday to Friday**, plus at login so a run missed while the machine was
-asleep still lands. Nothing here is worth an LLM invocation — it is two seconds
-of Python.
+`scripts/refresh.sh` rescans the transcripts, saves this machine's changed days
+to the shared dashboard (below), and on the Mac rewrites `jobs.html`. It runs
+at **:15 past every hour** on both machines, plus at login or boot so a run
+missed while the machine was asleep still lands. Nothing here is worth an LLM
+invocation: it is a few seconds of Python.
+
+Frequent rather than weekly because the retention window is the real deadline:
+Claude Code deletes transcripts after ~30 days, and every missed run spends part
+of that budget. Hourly also means the dashboard is never more than an hour behind
+the work you just did.
+
+**Mac**: the launchd agent `com.jasperlouage.ai-agent-usage.refresh`, with one
+`StartCalendarInterval` dict holding only `Minute` 15. An absent key is a
+wildcard, so no `Hour` means every hour, every day.
 
 ```bash
 tail -20 ~/Library/Logs/ai-agent-usage-refresh.log      # what it has been doing
 launchctl kickstart -p gui/$UID/com.jasperlouage.ai-agent-usage.refresh   # run now
 launchctl print gui/$UID/com.jasperlouage.ai-agent-usage.refresh | grep exit
-```
-
-Frequent rather than weekly because the retention window is the real deadline —
-Claude Code deletes transcripts after ~30 days, and every missed run spends part
-of that budget. Hourly also means the dashboard is never more than an hour behind
-the work you just did.
-
-The schedule is a **list** of `StartCalendarInterval` dicts, one per weekday,
-because launchd has no weekday range and an absent key is a wildcard: `Minute`
-alone, with no `Hour`, means ":15 past every hour". So five dicts express
-hourly-on-weekdays, not 120.
-
-```xml
-<dict><key>Weekday</key><integer>1</integer><key>Minute</key><integer>15</integer></dict>
-```
-
-Weekday runs Monday (1) to Friday (5); launchd counts Sunday as 0 or 7. Drop
-entries to narrow the days, or add `<key>Hour</key>` back to pin it to one time.
-
-Two gotchas, both learned here:
-
-- **Do not put `--` inside an XML comment** in the plist. `plutil -lint` and
-  launchd both accept it, but Python's `plistlib` — which `scripts/jobs.py` uses
-  to read every plist — rejects the file, so the job silently vanishes from
-  `jobs.html` while continuing to run.
-- Weekday-only means the longest healthy gap is **Fri 23:15 → Mon 00:15, ~49
-  hours**. `jobs.html` raises its own staleness banner past 2.5 days, chosen to
-  clear that gap; a tighter threshold would fire every Sunday.
-
-Uninstall:
-
-```bash
-launchctl bootout gui/$UID/com.jasperlouage.ai-agent-usage.refresh
+launchctl bootout gui/$UID/com.jasperlouage.ai-agent-usage.refresh          # uninstall
 rm ~/Library/LaunchAgents/com.jasperlouage.ai-agent-usage.refresh.plist
 ```
 
-After editing the plist, `bootout` then `bootstrap gui/$UID <plist>` to reload it.
+After editing the plist, `bootout` then `bootstrap gui/$UID <plist>` to reload
+it. **Do not put `--` inside an XML comment** in the plist: `plutil -lint` and
+launchd both accept it, but Python's `plistlib`, which `scripts/jobs.py` uses to
+read every plist, rejects the file, so the job silently vanishes from
+`jobs.html` while continuing to run.
+
+**Devbox** (`agent-jasper`): the systemd user timer `ai-agent-usage-refresh.timer`
+runs `ai-agent-usage-refresh.service` in this checkout. Linger is on, so it runs
+without a login session; the Mustry CLI reads its credentials from the unlocked
+GNOME keyring.
+
+```bash
+journalctl --user -u ai-agent-usage-refresh -n 40        # what it has been doing
+systemctl --user start ai-agent-usage-refresh.service    # run now
+systemctl --user list-timers ai-agent-usage-refresh.timer
+systemctl --user disable --now ai-agent-usage-refresh.timer                 # uninstall
+rm ~/.config/systemd/user/ai-agent-usage-refresh.{service,timer}
+```
+
+## Shared dashboard
+
+One Mustry Pages document combines every machine. The page itself holds no
+usage: each machine saves one shared-data record per day it has usage for, keyed
+`<machine>:<YYYY-MM-DD>`, and the page reads all of them when it opens. Two
+machines therefore never overwrite each other, and the hourly saves create no new
+page revisions. A machine filter appears once more than one machine has saved,
+and the footer shows when each machine last saved: a stale time there means that
+machine's job has stopped.
+
+```bash
+python3 scripts/publish.py --dry-run   # days this machine would save
+python3 scripts/publish.py             # save them (refresh.sh does this hourly)
+python3 scripts/publish.py --page      # republish the page: template or pricing changed
+```
+
+`config/shared-page.json` names the publication, the collection and a label per
+machine; the machine name is the lowercased hostname unless `USAGE_MACHINE` or
+`--machine` says otherwise. The password-free link is deliberately not in the
+repo, which is public: it is in `data/page/url.txt` on the Mac, and
+`mustry pages info <publication>` shows it. Saving needs the Mustry CLI with
+`pages data` (mustry-cockpit 2b881929 or later), signed in as the page's creator.
+
+The sharing service caps a document at 1000 records and 20 MB of save history,
+and the history never shrinks. A run therefore saves only days whose content
+changed since its last successful save (`data/published-<machine>.json`), and
+the CLI's `--if-changed` skips anything the server already holds. A day record
+is 0.5 to 3 KB, so two busy machines use roughly 50 to 100 KB a day: about a year
+before either limit. When one is reached, saves fail with a 413 in the log.
+Start a fresh page then: remove `publication` from the config and `data/page/`,
+run `--page`, and share the new link.
 
 ## Docker cleanup
 

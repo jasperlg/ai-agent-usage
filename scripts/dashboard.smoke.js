@@ -29,7 +29,7 @@ const data = {
   tools_daily: {[date]: {ClaudeTool: 2, CodexTool: 3}},
 };
 
-function run(payload = data, hash = '') {
+function run(payload = data, hash = '', extra = {}) {
   const nodes = {};
   const makeNode = () => ({
     innerHTML: '', textContent: '', dataset: {}, style: {}, children: [], attrs: {},
@@ -39,7 +39,7 @@ function run(payload = data, hash = '') {
     setAttribute(k,v) {this.attrs[k] = v;}, addEventListener() {},
   });
   const context = {
-    window: {USAGE_DATA: payload}, console, URLSearchParams, setTimeout, clearTimeout,
+    window: {USAGE_DATA: payload, ...extra}, console, URLSearchParams, setTimeout, clearTimeout,
     addEventListener() {}, location: {hash},
     history: {replaceState(_a,_b,value) {context.location.hash = value;}},
     getComputedStyle: () => ({getPropertyValue: () => '#123456'}),
@@ -49,8 +49,8 @@ function run(payload = data, hash = '') {
       createElement: makeNode, createElementNS: makeNode,
     },
   };
-  vm.runInNewContext(script, context);
-  return {nodes, context, pick(id, value) {
+  const done = vm.runInNewContext(script, context);
+  return {nodes, context, done, pick(id, value) {
     nodes['#' + id].onclick({target: {closest: () => ({dataset: {v: value}})}});
   }};
 }
@@ -148,4 +148,44 @@ const leap = run({...data, rows: ['2024-02-28','2024-02-29','2024-03-01'].map(d 
 leap.pick('range','all');
 assert.deepEqual(trendRows(leap).map(r => r.total),[2,1]);
 assert.match(trendRows(leap)[0].label,/Feb 29, 2024/);
-console.log('Dashboard checks passed: filters, pricing, daily/weekly/monthly totals, partial periods and calendar boundaries.');
+// The published page: no inlined data, one shared-data record per machine and day.
+const record = (machine, rows, sessions, updatedAt, deleted = false) => ({
+  collection: 'usage', key: `${machine}:${date}`, version: 1, deleted, updatedAt,
+  value: {v: 1, machine, date, columns: data.columns.slice(1),
+          rows: rows.map(r => r.slice(1)),
+          agents: {claude: {sessions_daily: sessions, tools_daily: {Read: sessions}, hours_daily: Array(24).fill(sessions), user_messages_daily: 0}}},
+});
+const pages = [
+  {records: [record('agent-jasper', [data.rows[0]], 4, '2026-08-15T13:00:00Z')], next: 'agent-jasper:2026-08-15'},
+  {records: [record('macbook-pro', [data.rows[0], data.rows[0]], 1, '2026-08-15T12:00:00Z'),
+             record('old-box', [data.rows[0]], 9, '2026-08-01T12:00:00Z', true)], next: null},
+];
+const shared = {collection: 'usage', machines: {'agent-jasper': 'Devbox'},
+  models: {'claude-test': {input: 1, output: 5}}, model_labels: {},
+  fallback: {input: 5, output: 25}, codex_fallback: {input: 0, output: 0, unpriced: true},
+  cache_multipliers: data.cache_multipliers};
+const seen = [];
+const both = run(null, '', {USAGE_SHARED: shared, MustryData: {
+  list: async (collection, options) => { seen.push([collection, options.after]); return pages[seen.length - 1]; }}});
+(async () => {
+  await both.done;
+  assert.deepEqual(seen, [['usage', undefined], ['usage', 'agent-jasper:2026-08-15']]);
+  assert.match(both.nodes['#tiles'].innerHTML, /\$3\.00/);
+  assert.match(both.nodes['#tiles'].innerHTML, /5<\/b> sessions/);
+  assert.match(both.nodes['#machine'].innerHTML, /Devbox/);
+  assert.match(both.nodes['#machine'].innerHTML, /macbook-pro/);
+  assert.doesNotMatch(both.nodes['#machine'].innerHTML, /old-box/);
+  assert.match(both.nodes['#foot-meta'].innerHTML, /Devbox/);
+  assert.equal(both.context.document.documentElement.dataset.printReady, 'true');
+  both.pick('machine', 'agent-jasper');
+  assert.match(both.nodes['#tiles'].innerHTML, /\$1\.00/);
+  assert.match(both.nodes['#tiles'].innerHTML, /4<\/b> sessions/);
+  assert.match(both.context.location.hash, /machine=agent-jasper/);
+  const failing = run(null, '', {USAGE_SHARED: shared, MustryData: {list: async () => { throw new Error('Open the original share link again'); }}});
+  await failing.done;
+  assert.match(failing.context.document.body.innerHTML, /Open the original share link again/);
+  const none = run(null, '', {USAGE_SHARED: shared, MustryData: {list: async () => ({records: [], next: null})}});
+  await none.done;
+  assert.match(none.context.document.body.innerHTML, /No usage data/);
+  console.log('Dashboard checks passed: filters, pricing, daily/weekly/monthly totals, partial periods, calendar boundaries and the shared page.');
+})().catch(error => { console.error(error); process.exitCode = 1; });

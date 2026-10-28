@@ -1,6 +1,6 @@
 {
   "_comment": "USD per 1,000,000 tokens. Anthropic and OpenAI API rates. Cache multipliers apply to input: 5m write = 1.25x, 1h write = 2.0x, read = 0.1x. A model's cached_input rate overrides the read multiplier.",
-  "_source": "claude-api skill reference, cached 2026-09-25",
+  "_source": "claude-api skill reference, cached 2026-10-06",
   "_codex_source": "https://developers.openai.com/api/docs/pricing and linked model pages, verified 2026-09-18. Standard short-context rates, excluding fast mode, long-context premiums and tool fees.",
   "cache_multipliers": {
     "write_5m": 1.25,
@@ -30,6 +30,8 @@
     "claude-sonnet-5":  { "input": 2.0,  "output": 10.0, "label": "Claude Sonnet 5", "tier": "sonnet" },
     "claude-sonnet-4-6":{ "input": 3.0,  "output": 15.0, "label": "Claude Sonnet 4.6","tier": "sonnet" },
     "claude-sonnet-4-5":{ "input": 3.0,  "output": 15.0, "label": "Claude Sonnet 4.5","tier": "sonnet" },
+    "claude-haiku-5-5": { "input": 0.1,  "output": 0.5,  "label": "Claude Haiku 5.5","tier": "haiku",
+                          "note": "Prompts up to 100K tokens; longer ones cost 0.50 / 2.50." },
     "claude-haiku-4-5": { "input": 1.0,  "output": 5.0,  "label": "Claude Haiku 4.5","tier": "haiku" }
   },
   "aliases": {

@@ -1,0 +1,8 @@
+{
+  "collection": "usage",
+  "machines": {
+    "macbook-pro": "MacBook Pro",
+    "agent-jasper": "Devbox"
+  },
+  "publication": "da203ab9-f837-4bb1-9ffa-1a29048f87a7"
+}

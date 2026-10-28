@@ -198,6 +198,8 @@ footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
   <div class="filters">
     <span class="lbl">Agent</span>
     <div class="seg" id="agent" role="group" aria-label="Agent"></div>
+    <span class="lbl machine-filter">Machine</span>
+    <div class="seg machine-filter" id="machine" role="group" aria-label="Machine"></div>
     <span class="lbl">Range</span>
     <div class="seg" id="range" role="group" aria-label="Date range"></div>
     <span class="meta" id="range-note" style="color:var(--muted);font-size:12.5px"></span>
@@ -300,7 +302,7 @@ footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
 
   <footer>
     <div id="foot-meta"></div>
-    <div style="margin-top:8px">
+    <div style="margin-top:8px" id="foot-refresh">
       Refresh with <code>python3 scripts/ingest.py --current-month</code> ·
       rates live in <code>config/pricing.json</code>
     </div>
@@ -312,9 +314,63 @@ footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
      not this generated file. -->
 <script>/*__USAGE_DATA__*/</script>
 <script>
-(() => {
+(async () => {
 "use strict";
-const D = window.USAGE_DATA;
+/* The published page has no inlined data: each machine saves one shared-data
+   record per day (key "<machine>:<date>"), and the page assembles them here
+   into the same payload shape ingest.py inlines. */
+async function loadShared(cfg) {
+  const records = [];
+  for (let after = ""; ;) {
+    const page = await window.MustryData.list(cfg.collection, after ? {limit:100, after} : {limit:100});
+    records.push(...page.records.filter(r => !r.deleted));
+    if (!page.next) break;
+    after = page.next;
+  }
+  const columns = ["date","project","model","input","output","cache_write_5m","cache_write_1h",
+                   "cache_read","messages","agent","machine"];
+  const rows = [], side = {}, machines = {}, pricing = {};
+  records.forEach(({value: day, updatedAt}) => {
+    const m = machines[day.machine] || (machines[day.machine] = {id: day.machine, updatedAt});
+    if (updatedAt > m.updatedAt) m.updatedAt = updatedAt;
+    day.rows.forEach(r => {
+      const o = {date: day.date, machine: day.machine};
+      day.columns.forEach((c,i) => o[c] = r[i]);
+      rows.push(columns.map(c => o[c] ?? (c === "agent" ? "claude" : 0)));
+      pricing[o.model] = cfg.models[o.model]
+        || (o.agent === "codex" ? cfg.codex_fallback : cfg.fallback);
+    });
+    Object.entries(day.agents || {}).forEach(([agent, stats]) => {
+      const t = side[`${day.machine}|${agent}`] ||= {};
+      Object.entries(stats).forEach(([field, v]) => (t[field] ||= {})[day.date] = v);
+    });
+  });
+  if (!rows.length) return null;
+  rows.sort((a,b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  const dates = rows.map(r => r[0]);
+  return {
+    shared: true, columns, rows, side, pricing,
+    machines: Object.values(machines).sort((a,b) => a.id < b.id ? -1 : 1)
+      .map(m => ({...m, label: cfg.machines[m.id] || m.id})),
+    generated_at: Object.values(machines).map(m => m.updatedAt).sort().at(-1),
+    months: [...new Set(dates.map(d => d.slice(0,7)))],
+    range: {start: dates[0], end: dates.at(-1)},
+    model_labels: cfg.model_labels, fallback: cfg.fallback,
+    cache_multipliers: cfg.cache_multipliers,
+  };
+}
+let D = window.USAGE_DATA;
+if (!D && window.USAGE_SHARED) {
+  try { D = await loadShared(window.USAGE_SHARED); }
+  catch (error) {
+    document.body.innerHTML =
+      '<div style="max-width:640px;margin:80px auto;padding:0 24px;font:15px/1.6 system-ui">' +
+      '<h1 style="font-size:19px">Could not load the usage data</h1>' +
+      `<p style="color:#c3c2b7">${String(error.message).replace(/[&<>"]/g, "")}</p>` +
+      '<p style="color:#898781;font-size:13px">Reload the page to try again.</p></div>';
+    return;
+  }
+}
 if (!D || !D.rows.length) {
   document.body.innerHTML =
     '<div style="max-width:640px;margin:80px auto;padding:0 24px;font:15px/1.6 system-ui">' +
@@ -373,7 +429,10 @@ function niceTicks(max, count=4) {
 
 /* ------------------------------------------------------- data preparation */
 const COLS  = D.columns;
-const FACTS = D.rows.map(r => { const o = {}; COLS.forEach((c,i) => o[c] = r[i]); return o; });
+const FACTS = D.rows.map(r => { const o = {machine:"local"}; COLS.forEach((c,i) => o[c] = r[i]); return o; });
+const MACHINES = D.machines || [{id:"local", label:"This machine"}];
+const SIDE = D.side || Object.fromEntries(Object.entries(D.agents || {claude: D})
+  .map(([agent, stats]) => [`local|${agent}`, stats]));
 const MULT  = D.cache_multipliers;
 const rateOf = m => D.pricing[m] || D.fallback;
 const readRate = p => p.cached_input ?? p.input * MULT.read;
@@ -432,9 +491,9 @@ const RANGES = [
   {id:"all", label:"All time"},
 ];
 /* Keep view options in the URL; each visit starts with 30 days and cost. */
-const state = { agent:"all", range:"30", split:"model", metric:"cost", period:"auto", proj:"cost", theme:"dark" };
+const state = { agent:"all", machine:"all", range:"30", split:"model", metric:"cost", period:"auto", proj:"cost", theme:"dark" };
 const ALLOWED = {
-  agent:["all","claude","codex"], range: RANGES.map(r => r.id), split:["model","type"],
+  agent:["all","claude","codex"], machine:["all", ...MACHINES.map(m => m.id)], range: RANGES.map(r => r.id), split:["model","type"],
   metric:["tokens","cost"], proj:["cost","tokens","messages"], theme:["dark","light"],
   period:["auto","day","week","month"],
 };
@@ -493,8 +552,28 @@ function timePeriods() {
   return {unit, periods, keysByDay};
 }
 const inRange = f => { const {from,to} = activeDates(); return f.date >= from && f.date <= to; };
-const slice = () => FACTS.filter(f => inRange(f) && (state.agent === "all" || f.agent === state.agent));
-const sideData = () => state.agent === "all" ? D : (D.agents?.[state.agent] || {});
+const slice = () => FACTS.filter(f => inRange(f) && (state.agent === "all" || f.agent === state.agent)
+  && (state.machine === "all" || f.machine === state.machine));
+/* Per-day side stats summed over the machines and agents the filters select. */
+function sideData() {
+  const out = {tools_daily:{}, hours_daily:{}, sessions_daily:{}, user_messages_daily:{}};
+  Object.entries(SIDE).forEach(([k, stats]) => {
+    const [machine, agent] = k.split("|");
+    if ((state.machine !== "all" && machine !== state.machine)
+        || (state.agent !== "all" && agent !== state.agent)) return;
+    Object.entries(stats.tools_daily || {}).forEach(([d, tools]) => {
+      const t = out.tools_daily[d] ||= {};
+      Object.entries(tools).forEach(([tool, n]) => t[tool] = (t[tool] || 0) + n);
+    });
+    Object.entries(stats.hours_daily || {}).forEach(([d, hours]) => {
+      const t = out.hours_daily[d] ||= Array(24).fill(0);
+      hours.forEach((n, h) => t[h] += n);
+    });
+    ["sessions_daily","user_messages_daily"].forEach(field =>
+      Object.entries(stats[field] || {}).forEach(([d, n]) => out[field][d] = (out[field][d] || 0) + n));
+  });
+  return out;
+}
 
 function groupSum(rows, keyFn) {
   const g = {};
@@ -898,6 +977,11 @@ function mountControls() {
     [{id:"all",label:"All agents"},{id:"claude",label:"Claude Code"},{id:"codex",label:"Codex"}],
     state.agent, v => { state.agent = v; bindAgent(); renderAll(); });
   bindAgent();
+  const bindMachine = () => seg($("#machine"),
+    [{id:"all",label:"All machines"}, ...MACHINES.map(m => ({id:m.id, label:m.label}))],
+    state.machine, v => { state.machine = v; bindMachine(); renderAll(); });
+  bindMachine();
+  if (MACHINES.length < 2) document.querySelectorAll(".machine-filter").forEach(n => n.style.display = "none");
   const bindRange = () => seg($("#range"), RANGES, state.range, v => {
     state.range = v; bindRange(); renderAll(); });
   bindRange();
@@ -947,15 +1031,20 @@ function mountControls() {
 const gen = new Date(D.generated_at);
 $("#hdr-meta").textContent =
   `${fmtDay(D.range.start)} – ${fmtDay(D.range.end)} · ${D.rows.length} daily records`;
-$("#foot-meta").innerHTML =
-  `Generated ${gen.toLocaleString("en-US",{dateStyle:"medium",timeStyle:"short"})} from
-   ${D.months.length} month file${D.months.length>1?"s":""} in <code>data/monthly/</code>.
+const when = d => new Date(d).toLocaleString("en-US",{dateStyle:"medium",timeStyle:"short"});
+$("#foot-meta").innerHTML = (D.shared
+  ? `Each machine saves its own usage every hour. Last saved: ${MACHINES.map(m =>
+      `${esc(m.label)} ${when(m.updatedAt)}`).join(" · ")}.`
+  : `Generated ${when(gen)} from
+   ${D.months.length} month file${D.months.length>1?"s":""} in <code>data/monthly/</code>.`) + `
    Costs estimate standard short-context API pricing for Claude Code and Codex.
    Subscription fees, fast mode, long-context premiums and tool charges are not included.
    Codex models without a configured rate are excluded from cost totals.`;
 
+if (D.shared) $("#foot-refresh").style.display = "none";
 mountControls();
 renderAll();
+document.documentElement.dataset.printReady = "true";
 let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(renderAll, 140); });
 })();
 </script>
