@@ -172,6 +172,11 @@ tfoot td { font-weight:650; border-top:1px solid var(--baseline); border-bottom:
 .hidden { display:none !important; }
 .note { font-size:12px; color:var(--muted); margin:10px 0 0; }
 .note b { color:var(--ink-2); font-weight:600; }
+.price-note { margin:14px 0 2px; padding:11px 15px; border-radius:10px; font-size:13px;
+              color:var(--ink-2); background:color-mix(in srgb, var(--s4) 12%, var(--surface));
+              border:1px solid color-mix(in srgb, var(--s4) 45%, transparent); }
+.price-note b { color:var(--ink); font-weight:650; }
+.price-note code { background:var(--surface-2); padding:1px 5px; border-radius:4px; font-size:12px; }
 .pill { display:inline-block; font-size:10.5px; padding:1.5px 7px; border-radius:20px;
         background:var(--surface-2); border:1px solid var(--border); color:var(--muted);
         vertical-align:middle; }
@@ -204,6 +209,8 @@ footer code { background:var(--surface-2); padding:2px 6px; border-radius:5px;
     <div class="seg" id="range" role="group" aria-label="Date range"></div>
     <span class="meta" id="range-note" style="color:var(--muted);font-size:12.5px"></span>
   </div>
+
+  <div class="price-note hidden" id="price-note" role="status"></div>
 
   <div class="tiles" id="tiles"></div>
 
@@ -604,6 +611,31 @@ function mkTip(host) {
 const tipRow = (color, name, val) =>
   `<div class="r"><span class="n">${color ? `<span class="sw" style="background:${color}"></span>` : ""}${esc(name)}</span><b>${val}</b></div>`;
 
+/* ======================================================= MISSING RATES */
+/* Name every model in view whose cost is excluded or guessed, so a new model
+   never silently drops out of the cost charts. */
+function renderPriceNote() {
+  const need = {};
+  slice().forEach(f => {
+    const p = rateOf(f.model);
+    if (!p.unpriced && !p.assumed) return;
+    const n = need[f.model] ||= {tokens:0, agent:f.agent, unpriced:!!p.unpriced};
+    n.tokens += f.total;
+  });
+  const items = Object.entries(need).sort((a,b) => b[1].tokens - a[1].tokens);
+  const note = $("#price-note");
+  note.classList.toggle("hidden", !items.length);
+  if (!items.length) { note.innerHTML = ""; return; }
+  const what = ([m, n]) => m === "codex-unknown"
+    ? `<code>${esc(m)}</code> (model not recorded, ${tok(n.tokens)} tokens)`
+    : `<code>${esc(m)}</code> (${n.agent === "codex" ? "Codex" : "Claude"}, ${tok(n.tokens)} tokens, ${
+        n.unpriced ? "left out of cost" : "estimated at the fallback rate"})`;
+  const redo = D.shared ? "python3 scripts/publish.py --page" : "python3 scripts/ingest.py --rebuild-payload";
+  note.innerHTML = `<b>${items.length} model${items.length > 1 ? "s need" : " needs"} a rate.</b> ` +
+    `${items.map(what).join(" · ")}. Add ${items.length > 1 ? "them" : "it"} to ` +
+    `<code>config/pricing.json</code>, then run <code>${redo}</code>.`;
+}
+
 /* ============================================================= STAT TILES */
 function renderTiles() {
   const rows = slice(), days = new Set(rows.map(r => r.date));
@@ -966,7 +998,7 @@ function seg(host, items, cur, onPick) {
   };
 }
 function renderAll() {
-  renderTiles(); renderHero(); renderIO();
+  renderPriceNote(); renderTiles(); renderHero(); renderIO();
   renderModels(); renderProjects(); renderTools(); renderHeat();
   const {from,to} = activeDates();
   $("#range-note").textContent = `${fmtFull(from)} – ${fmtFull(to)}`;

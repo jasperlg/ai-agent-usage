@@ -56,6 +56,9 @@ function run(payload = data, hash = '', extra = {}) {
 }
 
 const app = run();
+assert.match(app.nodes['#price-note'].innerHTML, /1 model needs a rate/);
+assert.match(app.nodes['#price-note'].innerHTML, /internal-model<\/code> \(Codex, 100 tokens, left out of cost\)/);
+assert.match(app.nodes['#price-note'].innerHTML, /ingest\.py --rebuild-payload/);
 assert.match(app.nodes['#tiles'].innerHTML, /\$13\.50/);
 assert.match(app.nodes['#tiles'].innerHTML, /5<\/b> sessions/);
 app.pick('agent', 'codex');
@@ -74,6 +77,7 @@ app.pick('hero-metric', 'cost');
 assert.match(app.nodes['#hero-table'].innerHTML, /\$0\.50/);
 assert.match(app.nodes['#hero-table'].innerHTML, /\$12\.50/);
 app.pick('agent', 'claude');
+assert.equal(app.nodes['#price-note'].innerHTML, '');
 assert.match(app.nodes['#tiles'].innerHTML, /\$1\.00/);
 assert.match(app.nodes['#tiles'].innerHTML, /2<\/b> sessions/);
 assert.doesNotMatch(app.nodes['#tiles'].innerHTML, /excluded/);
@@ -177,6 +181,7 @@ const both = run(null, '', {USAGE_SHARED: shared, MustryData: {
   assert.doesNotMatch(both.nodes['#machine'].innerHTML, /old-box/);
   assert.match(both.nodes['#foot-meta'].innerHTML, /Devbox/);
   assert.equal(both.context.document.documentElement.dataset.printReady, 'true');
+  assert.equal(both.nodes['#price-note'].innerHTML, '');
   both.pick('machine', 'agent-jasper');
   assert.match(both.nodes['#tiles'].innerHTML, /\$1\.00/);
   assert.match(both.nodes['#tiles'].innerHTML, /4<\/b> sessions/);
